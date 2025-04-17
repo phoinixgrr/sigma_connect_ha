@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Sigma Alarm",
+        "description": "Enter the IP address and credentials for your Sigma alarm panel.",
+        "data": {
+          "host": "IP Address",
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect"
+    },
+    "abort": {
+      "already_configured": "This alarm is already configured."
+    }
+  }
+}

@@ -1,0 +1,1 @@
+DOMAIN = "sigma_alarm"

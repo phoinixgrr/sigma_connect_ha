@@ -1,0 +1,5 @@
+{
+    "name": "Sigma Alarm connect",
+    "homeassistant": "0.110.0",
+    "domain": "sigma_alarm"
+  }
