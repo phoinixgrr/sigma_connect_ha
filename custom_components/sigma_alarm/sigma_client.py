@@ -7,10 +7,10 @@ import random
 import time
 import logging
 
-RETRY_TOTAL = 8
+RETRY_TOTAL = 5
 RETRY_BACKOFF_FACTOR = 0.5
 RETRY_STATUS_FORCELIST = [500, 502, 503, 504]
-RETRY_ATTEMPTS_FOR_HTML = 8
+RETRY_ATTEMPTS_FOR_HTML = 5
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def retry_html_request(func):
                 return func(*args, **kwargs)
             except (AttributeError, TypeError, IndexError) as e:
                 logger.warning(f"HTML parsing failed on attempt {attempt + 1}/{RETRY_ATTEMPTS_FOR_HTML}: {e}")
-                time.sleep(RETRY_BACKOFF_FACTOR * (2 ** attempt))  # exponential backoff
+                time.sleep(RETRY_BACKOFF_FACTOR * (2 ** attempt))
         raise RuntimeError(f"HTML parsing failed after {RETRY_ATTEMPTS_FOR_HTML} attempts.")
     return wrapper
 
@@ -147,6 +147,47 @@ class SigmaClient:
                         'bypass': cols[3].get_text(strip=True),
                     })
         return zones
+
+    def perform_action(self, action):
+        action_map = {
+            "arm": "arm.html",
+            "disarm": "disarm.html",
+            "stay": "stay.html"
+        }
+        if action not in action_map:
+            logger.warning(f"Invalid action '{action}'")
+            return None
+
+        try:
+            self.login()
+            soup = self.select_partition()
+            status_data = self.get_part_status(soup)
+            current_status, _ = self.parse_alarm_status(status_data.get("alarm_status"))
+
+            if current_status == "Disarmed" and action in ("arm", "stay"):
+                pass
+            elif current_status == "Armed" and action == "disarm":
+                pass
+            elif current_status == "Armed" and action in ("arm", "stay"):
+                logger.warning("System is already armed. Cannot arm or perimeter arm again.")
+                return None
+            elif current_status == "Perimeter Armed" and action == "arm":
+                pass
+            elif current_status == "Perimeter Armed" and action == "stay":
+                logger.warning("System is already perimeter armed. Cannot perimeter arm again.")
+                return None
+            elif current_status == "Disarmed" and action == "disarm":
+                logger.warning("System is already disarmed.")
+                return None
+
+            url = f"{self.base_url}/{action_map[action]}"
+            resp = self.session.get(url)
+            resp.raise_for_status()
+            return resp
+
+        except Exception as e:
+            logger.exception(f"Failed to perform action '{action}': {e}")
+            return None
 
     def parse_alarm_status(self, raw_status):
         mapping = {
