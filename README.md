@@ -15,9 +15,7 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
 - **Zone sensors**: Open/Closed state per zone + bypass state
 - **Battery voltage** and **AC power** monitoring
 
-
 ![Demo HA Integration](./images/demo.png "Sigma Alarm Demo HA Integration")
-
 
 ---
 
@@ -53,7 +51,7 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
 ## Notes
 
 - This integration relies on **HTML scraping** due to the lack of an official API.
-- Your Home Assistant instance must be able to communicate with the Alarm IP. Sigma systems support IP connectivity via an additional network module: [link](https://www.kalemisbros.gr/security/sigma/alarmperipherals/syskeyi-tcp-ip-epikoinonias-khoris-koyti-poy-khrisimopoieitai-me-toys-pinakes-s-pro-kai-aeolus-ixion-ip-c/)
+- Your Home Assistant instance must be able to communicate with the Alarm IP. Sigma systems support IP connectivity via an additional network module: [link](https://sigmasec.gr/ixion-ip)
 - Supports **read-only** functionality for now — arming/disarming will be supported in the future.
 - Tested with:
   - **AEOLUS v12.0**
