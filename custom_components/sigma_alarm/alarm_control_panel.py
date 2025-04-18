@@ -1,12 +1,7 @@
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
-    AlarmControlPanelEntityFeature
-)
-from homeassistant.const import (
-    STATE_ALARM_DISARMED,
-    STATE_ALARM_ARMED_AWAY,
-    STATE_ALARM_ARMED_HOME,
-    STATE_UNKNOWN
+    AlarmControlPanelEntityFeature,
+    AlarmControlPanelState,
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
@@ -19,9 +14,8 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     _attr_name = "Sigma Alarm Panel"
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_AWAY |
-        AlarmControlPanelEntityFeature.ARM_HOME |
-        AlarmControlPanelEntityFeature.DISARM
-    )
+        AlarmControlPanelEntityFeature.ARM_HOME
+    )  # ⚠️ DISARM is no longer a valid feature and is implicit
 
     def __init__(self, coordinator):
         super().__init__(coordinator)
@@ -30,12 +24,12 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     def state(self):
         status = self.coordinator.data.get("status")
         if status == "Disarmed":
-            return STATE_ALARM_DISARMED
+            return AlarmControlPanelState.DISARMED
         elif status == "Armed":
-            return STATE_ALARM_ARMED_AWAY
+            return AlarmControlPanelState.ARMED_AWAY
         elif status == "Perimeter Armed":
-            return STATE_ALARM_ARMED_HOME
-        return STATE_UNKNOWN
+            return AlarmControlPanelState.ARMED_HOME
+        return AlarmControlPanelState.UNKNOWN
 
     async def async_alarm_disarm(self, code=None):
         await self.hass.async_add_executor_job(
