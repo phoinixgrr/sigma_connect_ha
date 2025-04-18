@@ -15,7 +15,10 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_AWAY |
         AlarmControlPanelEntityFeature.ARM_HOME
-    )  # ⚠️ DISARM is no longer a valid feature and is implicit
+    )
+
+    _attr_code_format = None
+    _attr_code_arm_required = False
 
     def __init__(self, coordinator):
         super().__init__(coordinator)
