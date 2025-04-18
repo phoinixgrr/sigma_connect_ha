@@ -1,36 +1,30 @@
-# custom_components/sigma_alarm/alarm_control_panel.py
-
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
-    AlarmControlPanelEntityFeature,
+    AlarmControlPanelEntityFeature
 )
 from homeassistant.const import (
     STATE_ALARM_DISARMED,
     STATE_ALARM_ARMED_AWAY,
     STATE_ALARM_ARMED_HOME,
-    STATE_UNKNOWN,
+    STATE_UNKNOWN
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 
-
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities([SigmaAlarmPanel(coordinator, entry)])
-
+    async_add_entities([SigmaAlarmPanel(coordinator)])
 
 class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
-    def __init__(self, coordinator, entry):
+    _attr_name = "Sigma Alarm Panel"
+    _attr_supported_features = (
+        AlarmControlPanelEntityFeature.ARM_AWAY |
+        AlarmControlPanelEntityFeature.ARM_HOME |
+        AlarmControlPanelEntityFeature.DISARM
+    )
+
+    def __init__(self, coordinator):
         super().__init__(coordinator)
-        self.coordinator = coordinator
-        self.config_entry = entry
-        self._attr_name = "Sigma Alarm"
-        self._attr_supported_features = (
-            AlarmControlPanelEntityFeature.ARM_AWAY
-            | AlarmControlPanelEntityFeature.ARM_HOME
-            | AlarmControlPanelEntityFeature.DISARM
-        )
-        self._attr_unique_id = "sigma_alarm_panel"  # Required for discovery
 
     @property
     def state(self):
