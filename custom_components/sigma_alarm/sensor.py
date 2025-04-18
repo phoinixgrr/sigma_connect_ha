@@ -53,9 +53,22 @@ class SigmaSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, name, value_fn, unit=None):
         super().__init__(coordinator)
         self._attr_name = f"Sigma {name}"
+        self._attr_unique_id = f"sigma_{name.lower().replace(' ', '_')}"
         self._value_fn = value_fn
         self._attr_native_unit_of_measurement = unit
 
     @property
     def native_value(self):
         return self._value_fn(self.coordinator.data)
+
+    @property
+    def device_info(self):
+        """Attach to the Sigma Alarm device."""
+        entry_id = self.coordinator.config_entry.entry_id
+        return {
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": "Sigma Alarm",
+            "manufacturer": "Sigma",
+            "model": "Ixion",
+            "sw_version": "1.0.0",
+        }
