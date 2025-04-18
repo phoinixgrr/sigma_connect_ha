@@ -29,7 +29,7 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         self.entry = entry
 
     @property
-    def state(self):
+    def alarm_state(self):
         status = self.coordinator.data.get("status")
         if status == "Disarmed":
             return AlarmControlPanelState.DISARMED

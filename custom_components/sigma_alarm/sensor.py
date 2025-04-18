@@ -53,7 +53,7 @@ class SigmaSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, name, value_fn, unit=None):
         super().__init__(coordinator)
         self._attr_name = f"Sigma {name}"
-        self._attr_unique_id = f"sigma_{name.lower().replace(' ', '_')}"
+        self._attr_unique_id = f"{DOMAIN}_{self.coordinator.config_entry.entry_id}_{name.lower().replace(' ', '_')}"
         self._value_fn = value_fn
         self._attr_native_unit_of_measurement = unit
 
