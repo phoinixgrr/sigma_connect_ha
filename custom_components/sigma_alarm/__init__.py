@@ -24,6 +24,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "config": entry.data,
     }
+    hass.data[DOMAIN][entry.entry_id]["device_info"] = {
+        "identifiers": {(DOMAIN, entry.entry_id)},
+        "name": "Sigma Alarm",
+        "manufacturer": "Sigma",
+        "model": "Ixion",
+        "sw_version": "1.0.0",
+    }
 
     # Load platforms
     for platform in PLATFORMS:

@@ -1,3 +1,5 @@
+# custom_components/sigma_alarm/coordinator.py
+
 from datetime import timedelta
 import logging
 import re
@@ -12,10 +14,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# How often to poll
 UPDATE_INTERVAL = timedelta(seconds=20)
-
-# Retry settings
 MAX_TOTAL_ATTEMPTS = 3
 RETRY_BACKOFF_FACTOR = 0.5
 
@@ -36,7 +35,6 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self.username = config_entry.data[CONF_USERNAME]
         self.password = config_entry.data[CONF_PASSWORD]
 
-        # Always use port 5053
         base_url = f"http://{host}:5053"
         self.client = SigmaClient(base_url, self.username, self.password)
         self._last_data = None
@@ -50,12 +48,16 @@ class SigmaCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         try:
-            data = await self.hass.async_add_executor_job(self._retry_fetch_data_with_backoff)
+            data = await self.hass.async_add_executor_job(
+                self._retry_fetch_data_with_backoff
+            )
             self._last_data = data
             return data
         except Exception as err:
             if self._last_data is not None:
-                _LOGGER.warning("Fetch failed, returning last known good data: %s", err)
+                _LOGGER.warning(
+                    "Fetch failed, returning last known good data: %s", err
+                )
                 return self._last_data
             raise UpdateFailed(f"Error communicating with Sigma Alarm: {err}") from err
 
@@ -69,8 +71,8 @@ class SigmaCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning("Full flow failed on attempt %d: %s", attempt, exc)
                 if attempt < MAX_TOTAL_ATTEMPTS:
                     time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
-        # If we get here, every attempt failed:
-        raise RuntimeError("All retry attempts to fetch data failed")
+        # All attempts failed:
+        raise UpdateFailed("All retry attempts to fetch data failed")
 
     def _fetch_data(self):
         """Login, scrape, parse, verify completeness, and return."""
@@ -79,7 +81,9 @@ class SigmaCoordinator(DataUpdateCoordinator):
         status = self.client.get_part_status(soup)
         zones = self.client.get_zones(soup)
 
-        parsed_status, zones_bypassed = self.client.parse_alarm_status(status.get("alarm_status"))
+        parsed_status, zones_bypassed = self.client.parse_alarm_status(
+            status.get("alarm_status")
+        )
 
         # Data integrity check
         if not parsed_status or status.get("battery_volt") is None or not zones:

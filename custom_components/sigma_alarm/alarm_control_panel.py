@@ -1,39 +1,47 @@
+# custom_components/sigma_alarm/alarm_control_panel.py
+
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
-    AlarmControlPanelState,
+    AlarmState,
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
 from .const import DOMAIN
-
-
-async def async_setup_entry(hass, entry, async_add_entities):
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities([SigmaAlarmPanel(coordinator)])
-
 
 class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "sigma_alarm"
-    _attr_unique_id = "sigma_alarm_panel"
-    _attr_supported_features = (
-        AlarmControlPanelEntityFeature.ARM_AWAY
-        | AlarmControlPanelEntityFeature.ARM_HOME
-        | AlarmControlPanelEntityFeature.DISARM
-    )
-    _attr_name = "Sigma Alarm"
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = "sigma_alarm_panel"
+        self._attr_supported_features = (
+            AlarmControlPanelEntityFeature.ARM_AWAY
+            | AlarmControlPanelEntityFeature.ARM_HOME
+            | AlarmControlPanelEntityFeature.DISARM
+        )
 
     @property
-    def alarm_state(self) -> AlarmControlPanelState:
-        """Return the alarm panel’s current state."""
+    def name(self):
+        return "Sigma Alarm"
+
+    @property
+    def state(self):
         status = self.coordinator.data.get("status")
         if status == "Disarmed":
-            return AlarmControlPanelState.DISARMED
-        if status == "Armed":
-            return AlarmControlPanelState.ARMED_AWAY
-        if status == "Perimeter Armed":
-            return AlarmControlPanelState.ARMED_HOME
-        return AlarmControlPanelState.UNKNOWN
+            return AlarmState.DISARMED
+        elif status == "Armed":
+            return AlarmState.ARMED_AWAY
+        elif status == "Perimeter Armed":
+            return AlarmState.ARMED_HOME
+        return None
+
+    @property
+    def device_info(self):
+        """Return the device info for this panel."""
+        entry_id = self.coordinator.config_entry.entry_id
+        return self.coordinator.hass.data[DOMAIN][entry_id]["device_info"]
 
     async def async_alarm_disarm(self, code=None):
         await self.hass.async_add_executor_job(
