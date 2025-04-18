@@ -2,20 +2,20 @@
 
 This custom integration adds support for **Sigma Ixion alarm systems** in Home Assistant.
 
-It communicates with the alarm panel through HTTP requests and HTML parsing (web scraping), providing real-time insight into the panel's status and zones.
-
-![Alarm System](./images/alarm.jpg "Sigma Alarm Panel")
+It communicates with the alarm panel through HTTP requests and HTML parsing (web scraping), providing real-time insight into the panel's status and zones, as well as the ability to arm/disarm the system.
+-![Alarm System](./images/alarm.jpg "Sigma Alarm Panel")
 
 ---
 
 ## Features
 
 - **Alarm status**: Armed, Disarmed, or Perimeter Armed
+- **Arming/Disarming**: Full support for Away and Stay modes
 - **Bypassed zones**: Clearly indicates which zones are bypassed
 - **Zone sensors**: Open/Closed state per zone + bypass state
 - **Battery voltage** and **AC power** monitoring
 
-![Demo HA Integration](./images/demo.png "Sigma Alarm Demo HA Integration")
+-![Demo HA Integration](./images/demo.png "Sigma Alarm Demo HA Integration")
 
 ---
 
@@ -48,16 +48,47 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
 
 ---
 
+## How It Works
+
+Sigma does not offer a public or documented API. This integration operates via **HTML scraping**, similar to how you would inspect your alarm panel via your browser.
+
+We reverse-engineered the web interface used by the alarm's IP module:
+- Captured the requests and tokens during login from the browser’s developer tools
+- Reconstructed the flow in Python
+- Submit credentials through encrypted payloads
+- Select partitions and extract real-time data (status, zones, battery, etc.)
+
+This is a **security-by-obscurity** model on Sigma’s end. No real API is provided, and all logic relies on the undocumented web frontend.
+
+---
+
+
+---
+
+## Security & Token Handling
+
+Sigma alarm systems use a **token-based challenge-response mechanism** for login, but without HTTPS or other strong cryptographic transport. The token is embedded in the login form as an HTML field, and the alarm panel expects a derived password response using this token.
+
+Since Sigma does not expose an official API, the integration extracts this token by scraping the HTML login page. It then reproduces the exact JavaScript encryption logic (from the browser) in Python and submits the generated encrypted password.
+
+This behavior is a form of **security by obscurity**. While it adds some obfuscation, it provides limited real-world protection — especially as communication happens over plain HTTP. Therefore, for your own security:
+- Ensure your alarm system is **not exposed to the internet**.
+- Keep Home Assistant on a secure, trusted local network.
+
 ## Notes
 
-- This integration relies on **HTML scraping** due to the lack of an official API.
-- Your Home Assistant instance must be able to communicate with the Alarm IP. Sigma systems support IP connectivity via an additional network module: [link](https://sigmasec.gr/ixion-ip)
-- Supports **read-only** functionality for now — arming/disarming will be supported in the future.
+- Your Home Assistant instance must be able to communicate with the Alarm IP.
+- Sigma systems support IP connectivity via an additional network module: [https://sigmasec.gr/ixion-ip](https://sigmasec.gr/ixion-ip)
+- Supports **full read/write** functionality:
+  - Arm (Away)
+  - Arm (Stay/Perimeter)
+  - Disarm
 - Tested with:
-  - **AEOLUS v12.0**
-  - **Ixion Ver: 1.3.9**
+  - **AEOLUS v12.0** — Sigma alarm control panel
+  - **S-PRO 32** — Sigma alarm control panel
+  - **Ixion v1.3.9** — Sigma IP communication module used for integration
 - ⚠️ No guarantees for other firmware versions.
-- It is still in alpha form. Chances of working in your system are slim. 
+- It is still in alpha form. Chances of working in your system are slim.
 
 ---
 
@@ -82,19 +113,20 @@ custom_components/sigma_alarm/
 
 ## To-Do / Planned
 
-- [ ] Add arming/disarming support via alarm control panel entity
-- [ ] More robust error handling & retries
-- [ ] Better multi-partition(system 1/system2) support (if available)
+-- [x] Add arming/disarming support via alarm control panel entity
+-- [ ] More robust error handling & retries
+-- [ ] Better multi-partition(system 1/system2) support (if available)
 
 ---
 
 ## Feedback
 
-Found a bug or need a feature? Open an issue or PR in the [GitHub repository](https://github.com/phoinixgrr/sigma_connect_ha)!
+Found a bug or need a feature? Open an issue or PR in the [GitHub repository](https://github.com/phoinixgrr/sigma_connect_ha)
 
+---
 
 ## ☕ Support My Work
 
 If you find this project helpful and want to support my work, feel free to donate via PayPal:
 
-[![Donate via PayPal](https://img.shields.io/badge/Donate-via%20PayPal-blue.svg)](https://paypal.me/amaziotis)
+[https://paypal.me/amaziotis](https://paypal.me/amaziotis)
