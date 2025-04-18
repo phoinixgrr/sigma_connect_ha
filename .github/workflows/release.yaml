@@ -1,0 +1,31 @@
+name: Release on Tag Push
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'          # normal semver
+      - 'v*.*.*-dev*'     # dev builds
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract tag name
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # build up gh args
+          ARGS="--generate-notes --title 'Release ${TAG_NAME}'"
+          # if it's a dev tag, mark as prerelease
+          if [[ "${TAG_NAME}" == *-dev* ]]; then
+            ARGS="$ARGS --prerelease"
+          fi
+
+          gh release create "${TAG_NAME}" $ARGS --repo "${{ github.repository }}"
+
