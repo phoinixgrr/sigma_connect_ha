@@ -1,13 +1,14 @@
 {
-  "domain": "sigma_alarm",
-  "iot_class": "local_polling",
-  "integration_type": "integration",
-  "name": "Sigma Alarm",
-  "version": "1.0.0",
-  "documentation": "https://github.com/phoinixgrr/sigma_connect_ha",
-  "requirements": [],
-  "codeowners": [
-    "@phoinixgrr"
-  ],
-  "config_flow": true
+    "domain": "sigma_alarm",
+    "name": "Sigma Alarm",
+    "version": "1.0.0",
+    "integration_type": "integration",
+    "documentation": "https://github.com/phoinixgrr/sigma_connect_ha",
+    "requirements": [],
+    "codeowners": ["@phoinixgrr"],
+    "config_flow": true,
+    "iot_class": "local_polling",
+    "dependencies": [],
+    "after_dependencies": [],
+    "platforms": ["alarm_control_panel", "sensor"]
 }
