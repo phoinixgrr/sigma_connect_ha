@@ -10,6 +10,5 @@
     "iot_class": "local_polling",
     "dependencies": [],
     "after_dependencies": [],
-    "domains": ["alarm_control_panel", "sensor"]
-  }
-  
+    "platforms": ["alarm_control_panel", "sensor"]
+}
