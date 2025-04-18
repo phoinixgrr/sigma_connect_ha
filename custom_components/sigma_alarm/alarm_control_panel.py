@@ -1,3 +1,5 @@
+# custom_components/sigma_alarm/alarm_control_panel.py
+
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
@@ -14,25 +16,21 @@ from .const import DOMAIN
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities([SigmaAlarmPanel(coordinator)])
+    async_add_entities([SigmaAlarmPanel(coordinator, entry)])
 
 
 class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
-    _attr_has_entity_name = True
-    _attr_translation_key = "sigma_alarm"
-
-    def __init__(self, coordinator):
+    def __init__(self, coordinator, entry):
         super().__init__(coordinator)
-        self._attr_unique_id = "sigma_alarm_panel"
+        self.coordinator = coordinator
+        self.config_entry = entry
+        self._attr_name = "Sigma Alarm"
         self._attr_supported_features = (
             AlarmControlPanelEntityFeature.ARM_AWAY
             | AlarmControlPanelEntityFeature.ARM_HOME
             | AlarmControlPanelEntityFeature.DISARM
         )
-
-    @property
-    def name(self):
-        return "Sigma Alarm"
+        self._attr_unique_id = "sigma_alarm_panel"  # Required for discovery
 
     @property
     def state(self):
@@ -44,11 +42,6 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         elif status == "Perimeter Armed":
             return STATE_ALARM_ARMED_HOME
         return STATE_UNKNOWN
-
-    @property
-    def device_info(self):
-        entry_id = self.coordinator.config_entry.entry_id
-        return self.coordinator.hass.data[DOMAIN][entry_id]["device_info"]
 
     async def async_alarm_disarm(self, code=None):
         await self.hass.async_add_executor_job(
