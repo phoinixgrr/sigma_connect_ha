@@ -1,9 +1,12 @@
-# custom_components/sigma_alarm/alarm_control_panel.py
-
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
-    AlarmState,
+)
+from homeassistant.const import (
+    STATE_ALARM_DISARMED,
+    STATE_ALARM_ARMED_AWAY,
+    STATE_ALARM_ARMED_HOME,
+    STATE_UNKNOWN,
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
@@ -35,12 +38,12 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     def state(self):
         status = self.coordinator.data.get("status")
         if status == "Disarmed":
-            return AlarmState.DISARMED
+            return STATE_ALARM_DISARMED
         elif status == "Armed":
-            return AlarmState.ARMED_AWAY
+            return STATE_ALARM_ARMED_AWAY
         elif status == "Perimeter Armed":
-            return AlarmState.ARMED_HOME
-        return AlarmState.UNKNOWN
+            return STATE_ALARM_ARMED_HOME
+        return STATE_UNKNOWN
 
     @property
     def device_info(self):
