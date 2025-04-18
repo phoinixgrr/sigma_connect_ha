@@ -6,8 +6,13 @@ from homeassistant.components.alarm_control_panel import (
     AlarmState,
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
 from .const import DOMAIN
+
+
+async def async_setup_entry(hass, entry, async_add_entities):
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    async_add_entities([SigmaAlarmPanel(coordinator)])
+
 
 class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     _attr_has_entity_name = True
@@ -35,11 +40,10 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
             return AlarmState.ARMED_AWAY
         elif status == "Perimeter Armed":
             return AlarmState.ARMED_HOME
-        return None
+        return AlarmState.UNKNOWN
 
     @property
     def device_info(self):
-        """Return the device info for this panel."""
         entry_id = self.coordinator.config_entry.entry_id
         return self.coordinator.hass.data[DOMAIN][entry_id]["device_info"]
 
