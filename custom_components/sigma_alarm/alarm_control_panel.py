@@ -12,9 +12,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     _attr_name = "Sigma Alarm Panel"
+    _attr_unique_id = "sigma_alarm_panel" 
+
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_AWAY |
-        AlarmControlPanelEntityFeature.ARM_HOME
+        AlarmControlPanelEntityFeature.ARM_HOME |
+        AlarmControlPanelEntityFeature.DISARM
     )
 
     _attr_code_format = None
