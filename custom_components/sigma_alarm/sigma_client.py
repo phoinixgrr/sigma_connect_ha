@@ -1,49 +1,100 @@
+import logging
+import random
+import re
+import time
+from typing import List, Dict, Tuple, Optional
+
 import requests
+from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from bs4 import BeautifulSoup
-import re
-import random
-import time
-import logging
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 RETRY_TOTAL = 5
 RETRY_BACKOFF_FACTOR = 0.5
 RETRY_STATUS_FORCELIST = [500, 502, 503, 504]
 RETRY_ATTEMPTS_FOR_HTML = 5
 
+# Super‑retry parameters for arm / disarm / stay
+MAX_ACTION_ATTEMPTS    = 5   # full‑flow retries
+ACTION_BASE_DELAY      = 2   # sec – exponential back‑off multiplier
+POST_ACTION_EXTRA_DELAY = 3  # sec – wait before verifying state
+
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Generic HTML‑parse retry decorator
+# ---------------------------------------------------------------------------
 
 
 def retry_html_request(func):
-    """Decorator to retry HTML‐parsing functions on parse failures."""
+    """Retry any HTML‑dependent call on Attribute / Index / Type errors."""
+
     def wrapper(*args, **kwargs):
         for attempt in range(1, RETRY_ATTEMPTS_FOR_HTML + 1):
             try:
                 return func(*args, **kwargs)
-            except (AttributeError, IndexError, TypeError) as e:
-                logger.warning("HTML parse failed (attempt %d/%d): %s", attempt, RETRY_ATTEMPTS_FOR_HTML, e)
+            except (AttributeError, IndexError, TypeError) as exc:
+                logger.warning(
+                    "HTML parse failed (%d/%d): %s",
+                    attempt,
+                    RETRY_ATTEMPTS_FOR_HTML,
+                    exc,
+                )
                 time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
         raise RuntimeError("HTML parsing failed after max attempts")
+
     return wrapper
 
 
+# ---------------------------------------------------------------------------
+# Sigma alarm client
+# ---------------------------------------------------------------------------
+
+
 class SigmaClient:
-    def __init__(self, base_url: str, username: str, password: str):
+    """Resilient HTTP client for Sigma alarm panels."""
+
+    # --------------------------------------------------------------------- #
+    # Session / init
+    # --------------------------------------------------------------------- #
+
+    def __init__(self, base_url: str, username: str, password: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
-        self.session = requests.Session()
+        self.session: requests.Session = self._create_session()
 
+    def _create_session(self) -> requests.Session:
+        """Return a requests.Session with automatic HTTP retries."""
+        s = requests.Session()
         retry = Retry(
             total=RETRY_TOTAL,
             backoff_factor=RETRY_BACKOFF_FACTOR,
             status_forcelist=RETRY_STATUS_FORCELIST,
-            allowed_methods=["GET", "POST"]
+            allowed_methods=["GET", "POST"],
         )
         adapter = HTTPAdapter(max_retries=retry)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        s.mount("http://", adapter)
+        s.mount("https://", adapter)
+        return s
+
+    def logout(self) -> None:
+        """Best‑effort logout & fresh session (used at every full‑flow retry)."""
+        try:
+            self.session.get(f"{self.base_url}/logout.html", timeout=5)
+        except Exception:
+            pass
+        finally:
+            self.session.close()
+            self.session = self._create_session()
+
+    # --------------------------------------------------------------------- #
+    # Low‑level helpers
+    # --------------------------------------------------------------------- #
 
     @retry_html_request
     def _get_soup(self, path: str) -> BeautifulSoup:
@@ -52,8 +103,9 @@ class SigmaClient:
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
 
-    def _encrypt(self, secret: str, token: str):
-        # Same RC4‐style obfuscation...
+    # --- RC4‑style password obfuscation ----------------------------------
+
+    def _encrypt(self, secret: str, token: str) -> Tuple[str, str]:
         S = list(range(256))
         j = 0
         for i in range(256):
@@ -61,9 +113,9 @@ class SigmaClient:
             S[i], S[j] = S[j], S[i]
         i = j = 0
         num = random.randint(1, 7)
-        prefix = token[1:1 + num]
+        prefix = token[1 : 1 + num]
         suffix_len = 14 - num - len(secret)
-        suffix = token[num:num + suffix_len]
+        suffix = token[num : num + suffix_len]
         newpass = prefix + secret + suffix + str(num) + str(len(secret))
         out = []
         for ch in newpass:
@@ -75,47 +127,59 @@ class SigmaClient:
         cipher = "".join(out)
         return "".join(f"{ord(c):02x}" for c in cipher), str(len(cipher))
 
+    # --------------------------------------------------------------------- #
+    # Login flow
+    # --------------------------------------------------------------------- #
+
     @retry_html_request
-    def _submit_login(self):
+    def _submit_login(self) -> None:
         soup = self._get_soup("login.html")
         token = soup.find("input", {"name": "gen_input"})["value"]
         encrypted, gen_val = self._encrypt(self.password, token)
         data = {
-            "username":    self.username,
-            "password":    encrypted,
-            "gen_input":   gen_val,
-            "Submit":      "Apply",
+            "username": self.username,
+            "password": encrypted,
+            "gen_input": gen_val,
+            "Submit": "Apply",
         }
         self.session.post(f"{self.base_url}/login.html", data=data, timeout=5).raise_for_status()
 
     @retry_html_request
-    def _submit_pin(self):
+    def _submit_pin(self) -> None:
         soup = self._get_soup("user.html")
         token = soup.find("input", {"name": "gen_input"})["value"]
         encrypted, gen_val = self._encrypt(self.password, token)
         data = {
-            "password":    encrypted,
-            "gen_input":   gen_val,
-            "Submit":      "code",
+            "password": encrypted,
+            "gen_input": gen_val,
+            "Submit": "code",
         }
         self.session.post(f"{self.base_url}/ucode", data=data, timeout=5).raise_for_status()
 
-    def login(self):
+    def login(self) -> None:
+        """Full login (HTML form + PIN)."""
         self._submit_login()
         self._submit_pin()
 
+    # --------------------------------------------------------------------- #
+    # Partition / status helpers
+    # --------------------------------------------------------------------- #
+
     @retry_html_request
     def select_partition(self, part_id: str = "1") -> BeautifulSoup:
-        # Navigate to panel and select partition:
+        """Navigate to /panel and select a partition; returns its soup."""
         self.session.get(f"{self.base_url}/panel.html", timeout=5).raise_for_status()
         data = {"part": f"part{part_id}", "Submit": "code"}
         headers = {"Referer": f"{self.base_url}/panel.html"}
-        resp = self.session.post(f"{self.base_url}/part.cgi", data=data, headers=headers, timeout=5)
+        resp = self.session.post(
+            f"{self.base_url}/part.cgi", data=data, headers=headers, timeout=5
+        )
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
 
-    @retry_html_request
-    def get_part_status(self, soup: BeautifulSoup) -> dict:
+    # (No decorator: we want this to raise immediately)
+    def get_part_status(self, soup: BeautifulSoup) -> Dict[str, Optional[object]]:
+        """Extract alarm status, battery voltage, AC power from partition page."""
         p = soup.find("p")
         alarm_status = p.find_all("span")[1].get_text(strip=True) if p else None
 
@@ -126,14 +190,19 @@ class SigmaClient:
         return {
             "alarm_status": alarm_status,
             "battery_volt": float(battery.group(1)) if battery else None,
-            "ac_power":     self._to_bool(ac_match.group(1)) if ac_match else None,
+            "ac_power": self._to_bool(ac_match.group(1)) if ac_match else None,
         }
 
-    @retry_html_request
-    def get_zones(self, soup: BeautifulSoup) -> list:
+    # (No decorator for the same reason)
+    def get_zones(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
+        """Fetch the zones table and parse zone statuses."""
         link = soup.find("a", string=re.compile("ζωνών", re.I))
         url = link["href"] if link else "zones.html"
-        resp = self.session.get(f"{self.base_url}/{url.lstrip('/')}", timeout=5, headers={"Referer": f"{self.base_url}/part.cgi"})
+        resp = self.session.get(
+            f"{self.base_url}/{url.lstrip('/')}",
+            timeout=5,
+            headers={"Referer": f"{self.base_url}/part.cgi"},
+        )
         resp.raise_for_status()
         table = BeautifulSoup(resp.text, "html.parser").find("table", class_="normaltable")
         zones = []
@@ -141,25 +210,41 @@ class SigmaClient:
             for row in table.find_all("tr")[1:]:
                 cols = row.find_all("td")
                 if len(cols) >= 4:
-                    zones.append({
-                        "zone":        cols[0].get_text(strip=True),
-                        "description": cols[1].get_text(strip=True),
-                        "status":      cols[2].get_text(strip=True),
-                        "bypass":      cols[3].get_text(strip=True),
-                    })
+                    zones.append(
+                        {
+                            "zone": cols[0].get_text(strip=True),
+                            "description": cols[1].get_text(strip=True),
+                            "status": cols[2].get_text(strip=True),
+                            "bypass": cols[3].get_text(strip=True),
+                        }
+                    )
         return zones
 
-    def parse_alarm_status(self, raw_status: str):
+    # One‑stop helper that **fetches + parses** under retry
+    @retry_html_request
+    def _fetch_partition_status(
+        self, part_id: str = "1"
+    ) -> Tuple[Optional[str], Optional[bool]]:
+        soup = self.select_partition(part_id)
+        raw = self.get_part_status(soup)["alarm_status"]
+        return self.parse_alarm_status(raw)
+
+    # --------------------------------------------------------------------- #
+    # Utility conversions
+    # --------------------------------------------------------------------- #
+
+    def parse_alarm_status(self, raw_status: str) -> Tuple[Optional[str], Optional[bool]]:
         mapping = {
-            "AΦOΠΛIΣMENO":                        ("Disarmed",        None),
-            "OΠΛIΣMENO ME ZΩNEΣ BYPASS":          ("Armed",           True),
-            "OΠΛIΣMENO":                          ("Armed",           False),
+            "AΦOΠΛIΣMENO": ("Disarmed", None),
+            "OΠΛIΣMENO ME ZΩNEΣ BYPASS": ("Armed", True),
+            "OΠΛIΣMENO": ("Armed", False),
             "ΠEPIMETPIKH OΠΛIΣH ME ZΩNEΣ BYPASS": ("Armed Perimeter", True),
-            "ΠEPIMETPIKH OΠΛIΣH":                 ("Armed Perimeter", False),
+            "ΠEPIMETPIKH OΠΛIΣH": ("Armed Perimeter", False),
         }
         return mapping.get(raw_status, (None, None))
 
-    def _to_bool(self, val):
+    @staticmethod
+    def _to_bool(val) -> Optional[bool]:
         if not val:
             return None
         v = str(val).strip().upper()
@@ -169,7 +254,8 @@ class SigmaClient:
             return False
         return None
 
-    def _to_openclosed(self, val):
+    @staticmethod
+    def _to_openclosed(val) -> Optional[str]:
         if not val:
             return None
         v = str(val).strip().lower()
@@ -179,34 +265,71 @@ class SigmaClient:
             return "Open"
         return val
 
-    def perform_action(self, action: str):
+    # --------------------------------------------------------------------- #
+    # HIGH‑LEVEL ACTION with full‑flow retry
+    # --------------------------------------------------------------------- #
+
+    def perform_action(self, action: str) -> bool:
+        """
+        Arm / Disarm / Stay with full‑flow retry.
+        Returns True once the desired end‑state is confirmed.
+        """
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
+        desired_map = {
+            "arm": "Armed",
+            "disarm": "Disarmed",
+            "stay": "Armed Perimeter",
+        }
+
         if action not in action_map:
-            logger.warning("Invalid action %r", action)
-            return None
+            logger.error("Invalid action %r", action)
+            return False
 
-        try:
-            self.login()
-            soup = self.select_partition()
-            current, _ = self.parse_alarm_status(self.get_part_status(soup)["alarm_status"])
+        for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
+            try:
+                logger.debug("Attempt %d/%d for %s", attempt, MAX_ACTION_ATTEMPTS, action)
 
-            # Skip redundant
-            expected = {"arm": "Armed", "stay": "Armed Perimeter", "disarm": "Disarmed"}[action]
-            if current == expected:
-                logger.info("Already in state %s, skipping %s", expected, action)
-                return None
+                # 1️⃣  Fresh session / full login
+                self.logout()
+                self.login()
 
-            resp = self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5)
-            resp.raise_for_status()
+                # 2️⃣  Current state
+                current, _ = self._fetch_partition_status()
+                desired = desired_map[action]
 
-            # verify
-            time.sleep(1)
-            soup2 = self.select_partition()
-            new, _ = self.parse_alarm_status(self.get_part_status(soup2)["alarm_status"])
-            if new != expected:
-                raise RuntimeError(f"Expected {expected} after {action}, got {new}")
+                if current == desired:
+                    logger.info("Alarm already in desired state (%s)", desired)
+                    return True
 
-            return resp
-        except Exception as e:
-            logger.exception("Failed to perform action %r: %s", action, e)
-            return None
+                # 3️⃣  Trigger action
+                self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
+
+                # 4️⃣  Verify after delay
+                time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
+                new_state, _ = self._fetch_partition_status()
+
+                if new_state == desired:
+                    logger.info("Action '%s' successful on attempt %d", action, attempt)
+                    return True
+
+                logger.warning(
+                    "Mismatch after '%s' (attempt %d): expected %s, got %s",
+                    action,
+                    attempt,
+                    desired,
+                    new_state,
+                )
+
+            except Exception as exc:
+                logger.warning(
+                    "Attempt %d/%d failed for '%s': %s",
+                    attempt,
+                    MAX_ACTION_ATTEMPTS,
+                    action,
+                    exc,
+                )
+
+            time.sleep(ACTION_BASE_DELAY * attempt)
+
+        logger.error("Failed to perform action '%s' after %d attempts", action, MAX_ACTION_ATTEMPTS)
+        return False
