@@ -3,6 +3,7 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
 from .coordinator import SigmaCoordinator
@@ -19,17 +20,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = SigmaCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
 
+    # Register a device explicitly in the device registry
+    device_registry = dr.async_get(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        manufacturer="Sigma",
+        name="Sigma Alarm",
+        model="Ixion",
+        sw_version="1.0.0",
+    )
+
     # Store everything under hass.data[DOMAIN][entry_id]
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
         "config": entry.data,
-        "device_info": {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": "Sigma Alarm",
-            "manufacturer": "Sigma",
-            "model": "Ixion",
-            "sw_version": "1.0.0",
-        },
     }
 
     # Forward entry to each platform (sensor, alarm)
