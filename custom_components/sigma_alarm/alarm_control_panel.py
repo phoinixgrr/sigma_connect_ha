@@ -14,9 +14,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
-    _attr_name = "Sigma Alarm Panel"
-    _attr_unique_id = "sigma_alarm_panel"
-
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_AWAY |
         AlarmControlPanelEntityFeature.ARM_HOME
@@ -27,6 +24,8 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         self.entry = entry
+        self._attr_name = "Sigma Alarm Panel"
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_panel"
 
     @property
     def alarm_state(self):
