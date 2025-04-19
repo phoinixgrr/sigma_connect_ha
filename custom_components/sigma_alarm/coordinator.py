@@ -59,7 +59,8 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     "Fetch failed, returning last known good data: %s", err
                 )
                 return self._last_data
-            raise UpdateFailed(f"Error communicating with Sigma Alarm: {err}") from err
+            _LOGGER.error("Initial data fetch failed: %s", err)
+            return {}
 
     def _retry_fetch_data_with_backoff(self):
         """Wrap _fetch_data with retries & exponential backoff."""

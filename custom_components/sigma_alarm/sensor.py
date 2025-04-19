@@ -11,21 +11,22 @@ async def async_setup_entry(hass, entry, async_add_entities):
     sensors = []
 
     sensors.append(
-        SigmaSensor(coordinator, "Alarm Status", lambda d: d.get("status"))
+        SigmaSensor(coordinator, entry, "Alarm Status", lambda d: d.get("status"))
     )
     sensors.append(
-        SigmaSensor(coordinator, "Zones Bypassed", lambda d: d.get("zones_bypassed"))
+        SigmaSensor(coordinator, entry, "Zones Bypassed", lambda d: d.get("zones_bypassed"))
     )
     sensors.append(
         SigmaSensor(
             coordinator,
+            entry,
             "Battery Voltage",
             lambda d: d.get("battery_volt"),
             UnitOfElectricPotential.VOLT,
         )
     )
     sensors.append(
-        SigmaSensor(coordinator, "AC Power", lambda d: d.get("ac_power"))
+        SigmaSensor(coordinator, entry, "AC Power", lambda d: d.get("ac_power"))
     )
 
     for zone in coordinator.data.get("zones", []):
@@ -34,6 +35,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         sensors.append(
             SigmaSensor(
                 coordinator,
+                entry,
                 f"Zone {zid} - {name} Status",
                 lambda d, zid=zid: next(z for z in d["zones"] if z["zone"] == zid)["status"],
             )
@@ -41,6 +43,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         sensors.append(
             SigmaSensor(
                 coordinator,
+                entry,
                 f"Zone {zid} - {name} Bypass",
                 lambda d, zid=zid: next(z for z in d["zones"] if z["zone"] == zid)["bypass"],
             )
@@ -50,10 +53,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class SigmaSensor(CoordinatorEntity, SensorEntity):
-    def __init__(self, coordinator, name, value_fn, unit=None):
+    def __init__(self, coordinator, entry, name, value_fn, unit=None):
         super().__init__(coordinator)
+        self.entry = entry
         self._attr_name = f"Sigma {name}"
-        self._attr_unique_id = f"sigma_{name.lower().replace(' ', '_')}"
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{name.lower().replace(' ', '_')}"
         self._value_fn = value_fn
         self._attr_native_unit_of_measurement = unit
 
@@ -64,9 +68,8 @@ class SigmaSensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self):
         """Attach to the Sigma Alarm device."""
-        entry_id = self.coordinator.config_entry.entry_id
         return {
-            "identifiers": {(DOMAIN, entry_id)},
+            "identifiers": {(DOMAIN, self.entry.entry_id)},
             "name": "Sigma Alarm",
             "manufacturer": "Sigma",
             "model": "Ixion",

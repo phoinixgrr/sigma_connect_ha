@@ -1,3 +1,5 @@
+# custom_components/sigma_alarm/alarm_control_panel.py
+
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
@@ -8,12 +10,10 @@ from .const import DOMAIN
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities([SigmaAlarmPanel(coordinator)])
+    async_add_entities([SigmaAlarmPanel(coordinator, entry)])
+
 
 class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
-    _attr_name = "Sigma Alarm Panel"
-    _attr_unique_id = "sigma_alarm_panel"
-
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_AWAY |
         AlarmControlPanelEntityFeature.ARM_HOME
@@ -21,11 +21,14 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     _attr_code_format = None
     _attr_code_arm_required = False
 
-    def __init__(self, coordinator):
+    def __init__(self, coordinator, entry):
         super().__init__(coordinator)
+        self.entry = entry
+        self._attr_name = "Sigma Alarm Panel"
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_panel"
 
     @property
-    def state(self):
+    def alarm_state(self):
         status = self.coordinator.data.get("status")
         if status == "Disarmed":
             return AlarmControlPanelState.DISARMED
@@ -37,9 +40,8 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     @property
     def device_info(self):
-        entry_id = self.coordinator.config_entry.entry_id
         return {
-            "identifiers": {(DOMAIN, entry_id)},
+            "identifiers": {(DOMAIN, self.entry.entry_id)},
             "name": "Sigma Alarm",
             "manufacturer": "Sigma",
             "model": "Ixion",
@@ -63,4 +65,3 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
             self.coordinator.client.perform_action, "stay"
         )
         await self.coordinator.async_request_refresh()
-
