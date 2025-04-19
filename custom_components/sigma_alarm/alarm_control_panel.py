@@ -32,11 +32,11 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         status = self.coordinator.data.get("status")
         if status == "Disarmed":
             return AlarmControlPanelState.DISARMED
-        elif status == "Armed":
+        if status == "Armed":
             return AlarmControlPanelState.ARMED_AWAY
-        elif status == "Perimeter Armed":
+        if status == "Armed Perimeter":      
             return AlarmControlPanelState.ARMED_HOME
-        return AlarmControlPanelState.UNKNOWN
+        return None
 
     @property
     def device_info(self):

@@ -200,8 +200,9 @@ class SigmaClient:
             resp.raise_for_status()
 
             # verify
-            time.sleep(2)
-            new, _ = self.parse_alarm_status(self.select_partition().get_part_status()["alarm_status"])
+            time.sleep(1)
+            soup2 = self.select_partition()
+            new, _ = self.parse_alarm_status(self.get_part_status(soup2)["alarm_status"])
             if new != expected:
                 raise RuntimeError(f"Expected {expected} after {action}, got {new}")
 
