@@ -1,5 +1,5 @@
 {
-    "domain": "sigma_alarm",
+    "domain": "sigma_connect_ha",
     "name": "Sigma Alarm",
     "version": "1.0.0",
     "integration_type": "device",

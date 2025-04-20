@@ -1,6 +1,5 @@
 {
-    "name": "Sigma Alarm connect",
-    "homeassistant": "0.110.0",
-    "domain": "sigma_alarm",
-    "render_readme": true
-  }
+  "name": "Sigma Alarm connect",
+  "homeassistant": "2023.0.0",
+  "render_readme": true
+}

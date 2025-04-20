@@ -1,4 +1,4 @@
-# custom_components/sigma_alarm/coordinator.py
+# custom_components/sigma_connect_ha/coordinator.py
 
 from datetime import timedelta
 import logging

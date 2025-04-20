@@ -28,7 +28,7 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
 
 ### Option 2: Manual
 
-1. Copy the folder `custom_components/sigma_alarm/` to your Home Assistant `custom_components/` directory
+1. Copy the folder `custom_components/sigma_connect_ha/` to your Home Assistant `custom_components/` directory
 2. Restart Home Assistant
 
 ## Configuration

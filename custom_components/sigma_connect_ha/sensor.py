@@ -1,4 +1,4 @@
-# custom_components/sigma_alarm/sensor.py
+# custom_components/sigma_connect_ha/sensor.py
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
