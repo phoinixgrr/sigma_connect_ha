@@ -1,107 +1,139 @@
-# custom_components/sigma_connect_ha/coordinator.py
+# File: custom_components/sigma_connect_ha/coordinator.py
 
 from datetime import timedelta
 import logging
 import re
 import time
+from asyncio import Lock
 
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.core import HomeAssistant
-from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_HOST
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 
-from .sigma_client import SigmaClient
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_UPDATE_INTERVAL,
+    DEFAULT_UPDATE_INTERVAL,
+    CONF_RETRY_TOTAL,
+    DEFAULT_RETRY_TOTAL,
+    CONF_RETRY_BACKOFF_FACTOR,
+    DEFAULT_RETRY_BACKOFF_FACTOR,
+    CONF_RETRY_ATTEMPTS_FOR_HTML,
+    DEFAULT_RETRY_ATTEMPTS_FOR_HTML,
+    CONF_MAX_TOTAL_ATTEMPTS,
+    DEFAULT_MAX_TOTAL_ATTEMPTS,
+    CONF_MAX_ACTION_ATTEMPTS,
+    DEFAULT_MAX_ACTION_ATTEMPTS,
+    CONF_ACTION_BASE_DELAY,
+    DEFAULT_ACTION_BASE_DELAY,
+    CONF_POST_ACTION_EXTRA_DELAY,
+    DEFAULT_POST_ACTION_EXTRA_DELAY,
+)
+from . import sigma_client
 
 _LOGGER = logging.getLogger(__name__)
 
-UPDATE_INTERVAL = timedelta(seconds=20)
-MAX_TOTAL_ATTEMPTS = 3
-RETRY_BACKOFF_FACTOR = 0.5
-
 
 def sanitize_host(raw_host: str) -> str:
-    """Remove any protocol or port from the user-entered host."""
+    """Strip protocol and port from host string."""
     host = re.sub(r"^https?://", "", raw_host)
     host = re.sub(r":\d+$", "", host)
     return host.strip()
 
 
 class SigmaCoordinator(DataUpdateCoordinator):
-    def __init__(self, hass: HomeAssistant, config_entry) -> None:
+    """Coordinates data fetching and applies advanced options."""
+
+    def __init__(self, hass: HomeAssistant, entry) -> None:
         self.hass = hass
-        self.config_entry = config_entry
-
-        host = sanitize_host(config_entry.data[CONF_HOST])
-        self.username = config_entry.data[CONF_USERNAME]
-        self.password = config_entry.data[CONF_PASSWORD]
-
-        base_url = f"http://{host}:5053"
-        self.client = SigmaClient(base_url, self.username, self.password)
+        self.entry = entry
         self._last_data = None
+        self._lock = Lock()
+
+        opts = entry.options
+        # Override module constants
+        sigma_client.RETRY_TOTAL = opts.get(CONF_RETRY_TOTAL, DEFAULT_RETRY_TOTAL)
+        sigma_client.RETRY_BACKOFF_FACTOR = opts.get(
+            CONF_RETRY_BACKOFF_FACTOR, DEFAULT_RETRY_BACKOFF_FACTOR
+        )
+        sigma_client.RETRY_ATTEMPTS_FOR_HTML = opts.get(
+            CONF_RETRY_ATTEMPTS_FOR_HTML, DEFAULT_RETRY_ATTEMPTS_FOR_HTML
+        )
+        sigma_client.MAX_ACTION_ATTEMPTS = opts.get(
+            CONF_MAX_ACTION_ATTEMPTS, DEFAULT_MAX_ACTION_ATTEMPTS
+        )
+        sigma_client.ACTION_BASE_DELAY = opts.get(
+            CONF_ACTION_BASE_DELAY, DEFAULT_ACTION_BASE_DELAY
+        )
+        sigma_client.POST_ACTION_EXTRA_DELAY = opts.get(
+            CONF_POST_ACTION_EXTRA_DELAY, DEFAULT_POST_ACTION_EXTRA_DELAY
+        )
+
+        self.max_total_attempts = opts.get(
+            CONF_MAX_TOTAL_ATTEMPTS, DEFAULT_MAX_TOTAL_ATTEMPTS
+        )
+
+        interval = opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        update_interval = timedelta(seconds=interval)
+
+        base = sanitize_host(entry.data[CONF_HOST])
+        self.client = sigma_client.SigmaClient(
+            f"http://{base}:5053",
+            entry.data[CONF_USERNAME],
+            entry.data[CONF_PASSWORD],
+        )
 
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=UPDATE_INTERVAL,
+            update_interval=update_interval,
         )
 
     async def _async_update_data(self):
-        try:
-            data = await self.hass.async_add_executor_job(
-                self._retry_fetch_data_with_backoff
-            )
-            self._last_data = data
-            return data
-        except Exception as err:
-            if self._last_data is not None:
-                _LOGGER.warning(
-                    "Fetch failed, returning last known good data: %s", err
-                )
-                return self._last_data
-            _LOGGER.error("Initial data fetch failed: %s", err)
-            return {}
-
-    def _retry_fetch_data_with_backoff(self):
-        """Wrap _fetch_data with retries & exponential backoff."""
-        for attempt in range(1, MAX_TOTAL_ATTEMPTS + 1):
+        async with self._lock:
             try:
-                _LOGGER.debug("Fetch attempt %d/%d", attempt, MAX_TOTAL_ATTEMPTS)
-                return self._fetch_data()
-            except Exception as exc:
-                _LOGGER.warning("Full flow failed on attempt %d: %s", attempt, exc)
-                if attempt < MAX_TOTAL_ATTEMPTS:
-                    time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
-        # All attempts failed:
-        raise UpdateFailed("All retry attempts to fetch data failed")
+                data = await self.hass.async_add_executor_job(
+                    self._retry_with_backoff
+                )
+                self._last_data = data
+                return data
+            except Exception as err:
+                if self._last_data is not None:
+                    _LOGGER.warning("Fetch failed, returning last data: %s", err)
+                    return self._last_data
+                _LOGGER.error("Initial fetch failed: %s", err)
+                raise UpdateFailed(err)
 
-    def _fetch_data(self):
-        """Login, scrape, parse, verify completeness, and return."""
+    def _retry_with_backoff(self):
+        for i in range(1, self.max_total_attempts + 1):
+            try:
+                _LOGGER.debug("Fetch attempt %d/%d", i, self.max_total_attempts)
+                return self._fetch()
+            except Exception as ex:
+                _LOGGER.warning("Attempt %d failed: %s", i, ex)
+                if i < self.max_total_attempts:
+                    time.sleep(sigma_client.RETRY_BACKOFF_FACTOR * (2 ** (i - 1)))
+        raise UpdateFailed("All fetch attempts failed")
+
+    def _fetch(self):
         self.client.login()
         soup = self.client.select_partition()
         status = self.client.get_part_status(soup)
         zones = self.client.get_zones(soup)
 
-        parsed_status, zones_bypassed = self.client.parse_alarm_status(
-            status.get("alarm_status")
-        )
-
-        # Data integrity check
-        if not parsed_status or status.get("battery_volt") is None or not zones:
-            raise ValueError("Parsed data incomplete")
+        parsed, bypass = self.client.parse_alarm_status(status.get("alarm_status"))
+        if not parsed or status.get("battery_volt") is None or not zones:
+            raise ValueError("Incomplete data")
 
         return {
-            "status": parsed_status,
-            "zones_bypassed": zones_bypassed,
+            "status": parsed,
+            "zones_bypassed": bypass,
             "battery_volt": status.get("battery_volt"),
             "ac_power": status.get("ac_power"),
             "zones": [
-                {
-                    "zone":        z["zone"],
-                    "description": z["description"],
-                    "status":      self.client._to_openclosed(z["status"]),
-                    "bypass":      self.client._to_bool(z["bypass"]),
-                }
+                {**z, "status": self.client._to_openclosed(z["status"]),
+                          "bypass": self.client._to_bool(z["bypass"]) }
                 for z in zones
             ],
         }

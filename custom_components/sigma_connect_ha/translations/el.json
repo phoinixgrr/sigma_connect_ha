@@ -1,0 +1,40 @@
+{
+  "title": "Συναγερμός Sigma",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Σύνδεση με Sigma Alarm",
+        "description": "Εισάγετε τη διεύθυνση IP και τα στοιχεία για το πάνελ Sigma alarm.",
+        "data": {
+          "host": "Διεύθυνση IP",
+          "username": "Όνομα χρήστη",
+          "password": "Κωδικός πρόσβασης"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Αποτυχία σύνδεσης"
+    },
+    "abort": {
+      "already_configured": "Αυτός ο συναγερμός έχει ήδη ρυθμιστεί."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ρυθμίσεις Προχωρημένων",
+        "description": "Αλλάξτε μόνο αν ξέρετε τι κάνετε· αλλιώς αφήστε τις προεπιλογές.",
+        "data": {
+          "update_interval": "Διάστημα Ανάγνωσης (δευτ.)",
+          "retry_total": "Αριθμός Επαναλήψεων HTTP",
+          "retry_backoff_factor": "Πολλαπλασιαστής Backoff",
+          "retry_attempts_for_html": "Επαναλήψεις Ανάλυσης HTML",
+          "max_total_attempts": "Επαναλήψεις Ανάκτησης Δεδομένων",
+          "max_action_attempts": "Επαναλήψεις Εντολών",
+          "action_base_delay": "Καθυστέρηση Εντολών (βάση, δευτ.)",
+          "post_action_extra_delay": "Καθυστέρηση Επαλήθευσης (δευτ.)"
+        }
+      }
+    }
+  }
+}

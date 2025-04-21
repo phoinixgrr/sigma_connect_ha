@@ -43,6 +43,26 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
    - Username
    - Password
 
+## Advanced Settings
+
+After adding the integration, you can go to **Settings → Devices & Services → Sigma Alarm → Configure** to fine‑tune:
+
+| Option                   | Default | Description                                                                                          |
+|--------------------------|:-------:|------------------------------------------------------------------------------------------------------|
+| **Polling Interval**     | 10 s    | How often Home Assistant polls the panel (minimum 5 s).                                               |
+| **HTTP Retry Count**     | 5       | Number of times to retry on network or HTTP errors before giving up.                                  |
+| **Retry Backoff**        | 0.5     | Exponential backoff multiplier between retry attempts (0.0 = no backoff).                            |
+| **HTML‑Parse Retries**   | 3       | How many times to retry parsing the panel’s HTML if parsing fails.                                    |
+| **Data Fetch Retries**   | 3       | Number of times the coordinator will retry fetching all panel data on error.                         |
+| **Action Command Retries** | 5     | How many times to retry arm/disarm/stay commands if the first attempt doesn’t succeed.                |
+| **Action Delay (Base)**  | 2 s     | Base seconds to wait between each action retry (increases with each attempt).                        |
+| **Action Delay (Verify)**| 5 s     | Extra seconds to wait after sending an arm/disarm command before verifying the new panel state.      |
+
+![Advanced Settings](./images/advanced-settings.png "Advanced Settings")
+
+> **Warning:**
+> These settings adjust low‑level retry logic and timing. Only change them if you understand the impact otherwise, leave them at their default values.
+
 ## How It Works
 
 Sigma does not offer a public or documented API. This integration operates via **HTML scraping**, similar to how you would inspect your alarm panel via your browser.

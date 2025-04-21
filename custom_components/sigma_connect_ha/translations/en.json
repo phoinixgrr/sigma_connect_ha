@@ -18,5 +18,23 @@
     "abort": {
       "already_configured": "This alarm is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Advanced Settings",
+        "description": "Only change these if you really know what you’re doing—otherwise leave at defaults.",
+        "data": {
+          "update_interval": "Polling Interval (s)",
+          "retry_total": "HTTP Retry Count",
+          "retry_backoff_factor": "Retry Backoff Multiplier",
+          "retry_attempts_for_html": "HTML‑Parse Retries",
+          "max_total_attempts": "Data Fetch Retries",
+          "max_action_attempts": "Action Command Retries",
+          "action_base_delay": "Action Delay (Base, s)",
+          "post_action_extra_delay": "Action Delay (Verify, s)"
+        }
+      }
+    }
   }
 }
