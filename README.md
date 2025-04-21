@@ -1,3 +1,5 @@
+![Logo with Red Eggs](./images/logo.png "Easter Logo")
+
 # Sigma Alarm Integration for Home Assistant
 
 This custom integration adds support for **Sigma alarm systems**, with the Ixion addon(IP) in Home Assistant.
@@ -149,6 +151,12 @@ To access the alarm’s web interface manually, **you will need to temporarily d
 ## Feedback
 
 Found a bug or need a feature? Open an issue or PR in the [GitHub repository](https://github.com/phoinixgrr/sigma_connect_ha)
+
+## 🐣 Easter Egg
+
+This project was developed as a hobby project during **Greek Easter 2025** — which is why you might notice a few symbolic red Easter eggs baked into the logo 🥚🇬🇷.
+
+It’s a little nod to the timing of the project and a reminder that tech and tradition can happily coexist ✨
 
 ## ☕ Support My Work
 

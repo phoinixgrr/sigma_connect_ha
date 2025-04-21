@@ -5,7 +5,11 @@
     "integration_type": "device",
     "documentation": "https://github.com/phoinixgrr/sigma_connect_ha",
     "issue_tracker": "https://github.com/phoinixgrr/sigma_connect_ha/issues",
-    "requirements": [],
+    "requirements": [
+        "requests",
+        "beautifulsoup4",
+        "voluptuous"
+        ],
     "codeowners": ["@phoinixgrr"],
     "config_flow": true,
     "iot_class": "local_polling",
