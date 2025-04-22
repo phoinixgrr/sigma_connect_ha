@@ -5,6 +5,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 from homeassistant.helpers import config_validation as cv
+from homeassistant.components.persistent_notification import async_create as async_create_notification
 
 from .const import (
     DOMAIN,
@@ -65,6 +66,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
+            async_create_notification(
+                self.hass,
+                "Please restart Home Assistant for the Sigma Alarm changes to take effect.",
+                title="Sigma Alarm Integration",
+            )
             return self.async_create_entry(title="", data=user_input)
 
         opts = self.config_entry.options
