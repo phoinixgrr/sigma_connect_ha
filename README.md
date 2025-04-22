@@ -1,6 +1,12 @@
-![Logo with Red Eggs](./images/logo.png "Easter Logo")
+![HACS badge](https://img.shields.io/badge/HACS-Default-orange.svg)
+![GitHub release](https://img.shields.io/github/v/release/phoinixgrr/sigma_connect_ha)
+![GitHub stars](https://img.shields.io/github/stars/phoinixgrr/sigma_connect_ha?style=social)
+[![Validate with HACS Action](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/hacs-validation.yml/badge.svg)](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/hacs-validation.yml)
+[![Validate with hassfest Action](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/hassfest-validation.yaml/badge.svg)](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/hassfest-validation.yaml)
 
 # Sigma Alarm Integration for Home Assistant
+
+![Logo with Red Eggs](./images/logo-small.png "Easter Logo")
 
 This custom integration adds support for **Sigma alarm systems**, with the Ixion addon(IP) in Home Assistant.
 
@@ -62,6 +68,7 @@ After adding the integration, you can go to **Settings → Devices & Services �
 
 > **Warning:**
 > These settings adjust low‑level retry logic and timing. Only change them if you understand the impact otherwise, leave them at their default values.
+> Home Assistant needs to be restarted for the changes to take effect.
 
 ## How It Works
 
