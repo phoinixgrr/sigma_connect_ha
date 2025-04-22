@@ -3,12 +3,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers import config_validation as cv 
 
 from .const import DOMAIN
 from .coordinator import SigmaCoordinator
 
 PLATFORMS = ["sensor", "alarm_control_panel"]
-
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
     """YAML setup (unused)."""
