@@ -63,6 +63,7 @@ After adding the integration, you can go to **Settings → Devices & Services �
 | **Action Command Retries** | 5     | How many times to retry arm/disarm/stay commands if the first attempt doesn’t succeed.                |
 | **Action Delay (Base)**  | 2 s     | Base seconds to wait between each action retry (increases with each attempt).                        |
 | **Action Delay (Verify)**| 5 s     | Extra seconds to wait after sending an arm/disarm command before verifying the new panel state.      |
+| **Unavailable After Failures**   | 1     | Number of consecutive failed polls before marking sensors unavailable. |
 
 ![Advanced Settings](./images/advanced-settings.png "Advanced Settings")
 
@@ -113,13 +114,6 @@ Sigma does not document any API. To build this integration, we reverse-engineere
 
 1. **GET /login.html** returns a one-time token in a hidden input field (`gen_input`).
 2. A JavaScript function encrypts the user’s password using that token.
-   - It uses an **RC4-style stream cipher**:
-     - Initializes an `S` array (`0..255`)
-     - Shuffles it with the token (key scheduling)
-     - XORs the password with a generated keystream (PRGA)
-   - The password is wrapped in a custom format:
-     - `prefix + password + suffix + len(prefix) + len(password)`
-     - This string is then XORed with the RC4-style keystream and hex-encoded.
 3. The browser submits:
    - `username`
    - `encrypted password` (hex)

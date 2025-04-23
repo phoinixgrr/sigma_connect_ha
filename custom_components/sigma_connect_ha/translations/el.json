@@ -32,7 +32,8 @@
           "max_total_attempts": "Επαναλήψεις Ανάκτησης Δεδομένων",
           "max_action_attempts": "Επαναλήψεις Εντολών",
           "action_base_delay": "Καθυστέρηση Εντολών (βάση, δευτ.)",
-          "post_action_extra_delay": "Καθυστέρηση Επαλήθευσης (δευτ.)"
+          "post_action_extra_delay": "Καθυστέρηση Επαλήθευσης (δευτ.)",
+          "max_consecutive_failures": "Μη διαθέσιμο μετά από N αποτυχημένες προσπάθειες"
         }
       }
     }
