@@ -25,6 +25,8 @@ from .const import (
     DEFAULT_ACTION_BASE_DELAY,
     CONF_POST_ACTION_EXTRA_DELAY,
     DEFAULT_POST_ACTION_EXTRA_DELAY,
+    CONF_MAX_CONSECUTIVE_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_FAILURES
 )
 
 
@@ -62,7 +64,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Sigma Alarm integration advanced settings."""
 
     def __init__(self, config_entry):
-        self.config_entry = config_entry
+        self._entry = config_entry
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
@@ -107,6 +109,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_POST_ACTION_EXTRA_DELAY,
                 default=opts.get(CONF_POST_ACTION_EXTRA_DELAY, DEFAULT_POST_ACTION_EXTRA_DELAY),
             ): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
+            vol.Optional(
+                CONF_MAX_CONSECUTIVE_FAILURES,
+                default=opts.get(CONF_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_CONSECUTIVE_FAILURES),
+            ): vol.All(cv.positive_int, vol.Range(min=1)),
         })
 
         return self.async_show_form(step_id="init", data_schema=schema)

@@ -32,7 +32,8 @@
           "max_total_attempts": "Data Fetch Retries",
           "max_action_attempts": "Action Command Retries",
           "action_base_delay": "Action Delay (Base, s)",
-          "post_action_extra_delay": "Action Delay (Verify, s)"
+          "post_action_extra_delay": "Action Delay (Verify, s)",
+          "max_consecutive_failures": "Unavailable After Failures"
         }
       }
     }

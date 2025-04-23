@@ -1,5 +1,3 @@
-# File: custom_components/sigma_connect_ha/coordinator.py
-
 from datetime import timedelta
 import logging
 import re
@@ -28,6 +26,8 @@ from .const import (
     DEFAULT_ACTION_BASE_DELAY,
     CONF_POST_ACTION_EXTRA_DELAY,
     DEFAULT_POST_ACTION_EXTRA_DELAY,
+    CONF_MAX_CONSECUTIVE_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_FAILURES,
 )
 from . import sigma_client
 
@@ -49,6 +49,7 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self._last_data = None
         self._lock = Lock()
+        self._consecutive_failures = 0
 
         opts = entry.options
         # Override module constants
@@ -76,6 +77,11 @@ class SigmaCoordinator(DataUpdateCoordinator):
         interval = opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         update_interval = timedelta(seconds=interval)
 
+        # how many failures before going unavailable
+        self.max_consecutive_failures = opts.get(
+            CONF_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_CONSECUTIVE_FAILURES
+        )
+
         base = sanitize_host(entry.data[CONF_HOST])
         self.client = sigma_client.SigmaClient(
             f"http://{base}:5053",
@@ -97,13 +103,35 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     self._retry_with_backoff
                 )
                 self._last_data = data
+                # reset failure counter
+                self._consecutive_failures = 0
                 return data
             except Exception as err:
-                if self._last_data is not None:
-                    _LOGGER.warning("Fetch failed, returning last data: %s", err)
+                self._consecutive_failures += 1
+
+                # if we have old data and haven't hit threshold yet, return old data
+                if (
+                    self._last_data is not None
+                    and self._consecutive_failures < self.max_consecutive_failures
+                ):
+                    _LOGGER.warning(
+                        "Sigma fetch failed (%d/%d), returning last known data: %s",
+                        self._consecutive_failures,
+                        self.max_consecutive_failures,
+                        err,
+                    )
                     return self._last_data
-                _LOGGER.error("Initial fetch failed: %s", err)
-                raise UpdateFailed(err)
+
+                # otherwise mark unavailable
+                _LOGGER.error(
+                    "Sigma fetch failed (%d/%d), marking unavailable: %s",
+                    self._consecutive_failures,
+                    self.max_consecutive_failures,
+                    err,
+                )
+                raise UpdateFailed(
+                    f"Sigma fetch failed ({self._consecutive_failures}/{self.max_consecutive_failures}): {err}"
+                )
 
     def _retry_with_backoff(self):
         for i in range(1, self.max_total_attempts + 1):
@@ -132,8 +160,11 @@ class SigmaCoordinator(DataUpdateCoordinator):
             "battery_volt": status.get("battery_volt"),
             "ac_power": status.get("ac_power"),
             "zones": [
-                {**z, "status": self.client._to_openclosed(z["status"]),
-                          "bypass": self.client._to_bool(z["bypass"]) }
+                {
+                    **z,
+                    "status": self.client._to_openclosed(z["status"]),
+                    "bypass": self.client._to_bool(z["bypass"]),
+                }
                 for z in zones
             ],
         }
