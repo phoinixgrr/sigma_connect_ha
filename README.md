@@ -63,6 +63,7 @@ After adding the integration, you can go to **Settings → Devices & Services �
 | **Action Command Retries** | 5     | How many times to retry arm/disarm/stay commands if the first attempt doesn’t succeed.                |
 | **Action Delay (Base)**  | 2 s     | Base seconds to wait between each action retry (increases with each attempt).                        |
 | **Action Delay (Verify)**| 5 s     | Extra seconds to wait after sending an arm/disarm command before verifying the new panel state.      |
+| **Unavailable After Failures**   | 3     | Number of consecutive failed polls before marking sensors unavailable. |
 
 ![Advanced Settings](./images/advanced-settings.png "Advanced Settings")
 

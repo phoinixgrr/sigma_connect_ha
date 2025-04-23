@@ -11,6 +11,7 @@ CONF_MAX_TOTAL_ATTEMPTS = "max_total_attempts"
 CONF_MAX_ACTION_ATTEMPTS = "max_action_attempts"
 CONF_ACTION_BASE_DELAY = "action_base_delay"
 CONF_POST_ACTION_EXTRA_DELAY = "post_action_extra_delay"
+CONF_MAX_CONSECUTIVE_FAILURES = "max_consecutive_failures"
 
 # Default values for advanced settings
 DEFAULT_UPDATE_INTERVAL = 10            # seconds between polling updates
@@ -21,3 +22,4 @@ DEFAULT_MAX_TOTAL_ATTEMPTS = 3          # Coordinator fetch retry attempts
 DEFAULT_MAX_ACTION_ATTEMPTS = 5         # Attempts for arm/disarm/stay actions
 DEFAULT_ACTION_BASE_DELAY = 2.0         # Seconds base delay between action retries
 DEFAULT_POST_ACTION_EXTRA_DELAY = 5.0   # Seconds delay after action before verifying
+DEFAULT_MAX_CONSECUTIVE_FAILURES = 3    # Number of consecutive polling failures before marking data unavailable
