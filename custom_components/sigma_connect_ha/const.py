@@ -22,4 +22,4 @@ DEFAULT_MAX_TOTAL_ATTEMPTS = 3          # Coordinator fetch retry attempts
 DEFAULT_MAX_ACTION_ATTEMPTS = 5         # Attempts for arm/disarm/stay actions
 DEFAULT_ACTION_BASE_DELAY = 2.0         # Seconds base delay between action retries
 DEFAULT_POST_ACTION_EXTRA_DELAY = 5.0   # Seconds delay after action before verifying
-DEFAULT_MAX_CONSECUTIVE_FAILURES = 1    # Number of consecutive polling failures before marking data unavailable
+DEFAULT_MAX_CONSECUTIVE_FAILURES = 3    # Number of consecutive polling failures before marking data unavailable
