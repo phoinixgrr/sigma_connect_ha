@@ -100,22 +100,26 @@ class SigmaClient:
         resp = self.session.get(url, timeout=5, headers=headers)
         if self._is_login_page(resp.text):
             logger.warning("Session expired. Re‑logging in...")
+            self.logout()
             self.login()
             resp = self.session.get(url, timeout=5, headers=headers)
             if self._is_login_page(resp.text):
                 logger.error("Login failed after retry")
-                raise RuntimeError("Login failed after retry")
+                raise RuntimeError("Login failed after retry")  # 🔥 Bubble up!
         resp.raise_for_status()
         return resp.text
 
     def _smart_post(self, path: str, data: dict = None, headers: dict = None) -> str:
-        """POST that re‑logins if session expired."""
         url = f"{self.base_url}/{path.lstrip('/')}"
         resp = self.session.post(url, data=data, headers=headers, timeout=5)
         if self._is_login_page(resp.text):
             logger.warning("Session expired. Re‑logging in...")
+            self.logout()
             self.login()
             resp = self.session.post(url, data=data, headers=headers, timeout=5)
+            if self._is_login_page(resp.text):
+                logger.error("Login failed after retry")
+                raise RuntimeError("Login failed after retry")  # 🔥 Bubble up!
         resp.raise_for_status()
         return resp.text
 
