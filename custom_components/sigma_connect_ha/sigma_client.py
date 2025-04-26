@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 # Generic HTML‑parse retry decorator
 # ---------------------------------------------------------------------------
 
-
 def retry_html_request(func):
     """Retry any HTML‑dependent call on Attribute / Index / Type errors."""
 
@@ -98,11 +97,10 @@ class SigmaClient:
 
     def _smart_get(self, path: str, headers: dict = None) -> str:
         """GET that re‑logins if session expired."""
-        url = f"{self.base_url}/{path.lstrip('/') }"
+        url = f"{self.base_url}/{path.lstrip('/')}"
         resp = self.session.get(url, timeout=5, headers=headers)
         if self._is_login_page(resp.text):
             logger.warning("Session expired. Re‑logging in...")
-            self.logout()
             self.login()
             resp = self.session.get(url, timeout=5, headers=headers)
         resp.raise_for_status()
@@ -110,11 +108,10 @@ class SigmaClient:
 
     def _smart_post(self, path: str, data: dict = None, headers: dict = None) -> str:
         """POST that re‑logins if session expired."""
-        url = f"{self.base_url}/{path.lstrip('/') }"
+        url = f"{self.base_url}/{path.lstrip('/')}"
         resp = self.session.post(url, data=data, headers=headers, timeout=5)
         if self._is_login_page(resp.text):
             logger.warning("Session expired. Re‑logging in...")
-            self.logout()
             self.login()
             resp = self.session.post(url, data=data, headers=headers, timeout=5)
         resp.raise_for_status()
@@ -199,7 +196,6 @@ class SigmaClient:
         html = self._smart_post("part.cgi", data=data, headers={"Referer": f"{self.base_url}/panel.html"})
         return BeautifulSoup(html, "html.parser")
 
-    # (No decorator: we want this to raise immediately)
     def get_part_status(self, soup: BeautifulSoup) -> Dict[str, Optional[object]]:
         """Extract alarm status, battery voltage, AC power from partition page."""
         p = soup.find("p")
@@ -215,7 +211,6 @@ class SigmaClient:
             "ac_power": self._to_bool(ac_match.group(1)) if ac_match else None,
         }
 
-    # (No decorator for the same reason)
     def get_zones(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
         """Fetch the zones table and parse zone statuses."""
         link = soup.find("a", string=re.compile("ζωνών", re.I))
@@ -237,11 +232,8 @@ class SigmaClient:
                     )
         return zones
 
-    # One‑stop helper that **fetches + parses** under retry
     @retry_html_request
-    def _fetch_partition_status(
-        self, part_id: str = "1"
-    ) -> Tuple[Optional[str], Optional[bool]]:
+    def _fetch_partition_status(self, part_id: str = "1") -> Tuple[Optional[str], Optional[bool]]:
         soup = self.select_partition(part_id)
         raw = self.get_part_status(soup)["alarm_status"]
         return self.parse_alarm_status(raw)
@@ -306,7 +298,6 @@ class SigmaClient:
             try:
                 logger.debug("Attempt %d/%d for %s", attempt, MAX_ACTION_ATTEMPTS, action)
 
-                # 1️⃣  Refresh status without forced logout/login
                 soup = self.select_partition()
                 current, _ = self.parse_alarm_status(self.get_part_status(soup)["alarm_status"])
                 desired = desired_map[action]
@@ -315,8 +306,34 @@ class SigmaClient:
                     logger.info("Alarm already in desired state (%s)", desired)
                     return True
 
-                # 2️⃣ Trigger action with smart GET (auto re-login if needed)
                 self._smart_get(action_map[action])
 
-                # 3️⃣ Verify after delay
                 time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
+                new_soup = self.select_partition()
+                new_state, _ = self.parse_alarm_status(self.get_part_status(new_soup)["alarm_status"])
+
+                if new_state == desired:
+                    logger.info("Action '%s' successful on attempt %d", action, attempt)
+                    return True
+
+                logger.warning(
+                    "Mismatch after '%s' (attempt %d): expected %s, got %s",
+                    action,
+                    attempt,
+                    desired,
+                    new_state,
+                )
+
+            except Exception as exc:
+                logger.warning(
+                    "Attempt %d/%d failed for '%s': %s",
+                    attempt,
+                    MAX_ACTION_ATTEMPTS,
+                    action,
+                    exc,
+                )
+
+            time.sleep(ACTION_BASE_DELAY * attempt)
+
+        logger.error("Failed to perform action '%s' after %d attempts", action, MAX_ACTION_ATTEMPTS)
+        return False
