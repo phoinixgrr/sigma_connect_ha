@@ -96,13 +96,15 @@ class SigmaClient:
         return "login.html" in html.lower() or "gen_input" in html.lower()
 
     def _smart_get(self, path: str, headers: dict = None) -> str:
-        """GET that re‑logins if session expired."""
         url = f"{self.base_url}/{path.lstrip('/')}"
         resp = self.session.get(url, timeout=5, headers=headers)
         if self._is_login_page(resp.text):
             logger.warning("Session expired. Re‑logging in...")
             self.login()
             resp = self.session.get(url, timeout=5, headers=headers)
+            if self._is_login_page(resp.text):
+                logger.error("Login failed after retry")
+                raise RuntimeError("Login failed after retry")
         resp.raise_for_status()
         return resp.text
 
