@@ -3,39 +3,54 @@ name: Release on Tag Push
 on:
   push:
     tags:
-      - 'v*.*.*'        # full semver
-      - 'v*.*.*-dev*'   # dev/prerelease builds
+      - 'v*.*.*'
+      - 'v*.*.*-dev*'
 
-# grant write access so we can create releases
 permissions:
   contents: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Extract Tag Name
-        id: get_tag
         run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
+      - name: Remove "v" prefix and store as VERSION
+        run: echo "VERSION=${TAG_NAME#v}" >> $GITHUB_ENV
+
       - name: Create GitHub Release
+        id: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          # if it's a dev tag, mark as prerelease
           if [[ "${TAG_NAME}" == *-dev* ]]; then
+            echo "IS_DEV=true" >> $GITHUB_ENV
             gh release create "${TAG_NAME}" \
               --generate-notes \
               --title "Release ${TAG_NAME}" \
               --prerelease \
               --repo "${GITHUB_REPOSITORY}"
           else
+            echo "IS_DEV=false" >> $GITHUB_ENV
             gh release create "${TAG_NAME}" \
               --generate-notes \
               --title "Release ${TAG_NAME}" \
               --repo "${GITHUB_REPOSITORY}"
           fi
+
+      - name: Update manifest.json only after successful stable release
+        if: ${{ success() && env.IS_DEV == 'false' }}
+        run: |
+          echo "Updating manifest.json to version $VERSION"
+          jq --arg version "$VERSION" '.version = $version' custom_components/your_component/manifest.json > tmp.json && mv tmp.json custom_components/your_component/manifest.json
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git commit -am "chore: update manifest version to $VERSION"
+          git push
