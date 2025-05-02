@@ -145,42 +145,25 @@ class SigmaCoordinator(DataUpdateCoordinator):
         raise UpdateFailed("All fetch attempts failed")
 
 
-    def _fetch(self):
-        # Try fast refresh if already logged in
-        if self.client.logged_in:
-            try:
-                zones = self.client.refresh_zones_only()
-                status = {
-                    "alarm_status": None,
-                    "battery_volt": None,
-                    "ac_power": None,
-                }
-                soup = None
-            except Exception:
-                _LOGGER.debug("Fast zone refresh failed, falling back to full fetch")
-                self.client.logged_in = False
+def _fetch(self):
+    self.client.login()
+    zones, status = self.client.get_all_from_zones()
 
-        if not self.client.logged_in:
-            self.client.login()
-            soup = self.client.select_partition()
-            status = self.client.get_part_status(soup)
-            zones = self.client.get_zones(soup)
+    parsed, bypass = self.client.parse_alarm_status(status.get("alarm_status"))
+    if not parsed or status.get("battery_volt") is None or not zones:
+        raise ValueError("Incomplete data")
 
-        parsed, bypass = self.client.parse_alarm_status(status.get("alarm_status"))
-        if not parsed or status.get("battery_volt") is None or not zones:
-            raise ValueError("Incomplete data")
-
-        return {
-            "status": parsed,
-            "zones_bypassed": bypass,
-            "battery_volt": status.get("battery_volt"),
-            "ac_power": status.get("ac_power"),
-            "zones": [
-                {
-                    **z,
-                    "status": self.client._to_openclosed(z["status"]),
-                    "bypass": self.client._to_bool(z["bypass"]),
-                }
-                for z in zones
-            ],
-        }
+    return {
+        "status": parsed,
+        "zones_bypassed": bypass,
+        "battery_volt": status.get("battery_volt"),
+        "ac_power": status.get("ac_power"),
+        "zones": [
+            {
+                **z,
+                "status": self.client._to_openclosed(z["status"]),
+                "bypass": self.client._to_bool(z["bypass"]),
+            }
+            for z in zones
+        ],
+    }

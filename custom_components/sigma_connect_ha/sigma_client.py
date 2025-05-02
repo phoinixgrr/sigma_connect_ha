@@ -209,6 +209,62 @@ class SigmaClient:
                     )
         return zones
 
+def get_all_from_zones(self) -> Tuple[List[Dict[str, str]], Dict[str, Optional[object]]]:
+    """
+    Fetches zones.html and extracts:
+    - zone details
+    - alarm status
+    - battery voltage
+    - AC power
+    Returns a tuple: (zones, status_dict)
+    """
+    url = f"{self.base_url}/zones.html"
+    headers = {"Referer": f"{self.base_url}/part.cgi"}
+    resp = self.session.get(url, timeout=5, headers=headers)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Extract alarm status from header
+    alarm_status = None
+    battery_volt = None
+    ac_power = None
+
+    full_text = soup.get_text(" ", strip=True)
+    alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(\S+)", full_text)
+    battery_match = re.search(r"Μπαταρία:\s*([\d.]+)\s*Volt", full_text)
+    ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", full_text, re.IGNORECASE)
+
+    if alarm_match:
+        alarm_status = alarm_match.group(1).strip()
+
+    if battery_match:
+        battery_volt = float(battery_match.group(1))
+
+    if ac_match:
+        ac_power = self._to_bool(ac_match.group(1))
+
+    # Parse zones table
+    table = soup.find("table", class_="normaltable")
+    zones = []
+    if table:
+        for row in table.find_all("tr")[1:]:
+            cols = row.find_all("td")
+            if len(cols) >= 4:
+                zones.append(
+                    {
+                        "zone": cols[0].get_text(strip=True),
+                        "description": cols[1].get_text(strip=True),
+                        "status": cols[2].get_text(strip=True),
+                        "bypass": cols[3].get_text(strip=True),
+                    }
+                )
+
+    return zones, {
+        "alarm_status": alarm_status,
+        "battery_volt": battery_volt,
+        "ac_power": ac_power,
+    }
+
     # --------------------------------------------------------------------- #
     # Fast zone refresh skipping login if already authenticated
     # --------------------------------------------------------------------- #
