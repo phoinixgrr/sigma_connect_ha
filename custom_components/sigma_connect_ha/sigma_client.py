@@ -340,6 +340,7 @@ class SigmaClient:
 
                 if new_state == desired:
                     logger.info("Action '%s' successful on attempt %d", action, attempt)
+                    self.logout() 
                     return True
 
                 logger.warning(

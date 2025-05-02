@@ -58,6 +58,7 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     async def _double_refresh(self):
         """Wait briefly, then refresh twice for reliability."""
         await asyncio.sleep(1)
+        self.coordinator.client.logout()  # 👈 Force full reauth
         await self.coordinator.async_request_refresh()
         await asyncio.sleep(1)
         await self.coordinator.async_request_refresh()
