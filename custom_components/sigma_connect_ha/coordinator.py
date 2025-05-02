@@ -144,6 +144,7 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     time.sleep(sigma_client.RETRY_BACKOFF_FACTOR * (2 ** (i - 1)))
         raise UpdateFailed("All fetch attempts failed")
 
+
     def _fetch(self):
         # Try fast refresh if already logged in
         if self.client.logged_in:
@@ -180,9 +181,6 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     "status": self.client._to_openclosed(z["status"]),
                     "bypass": self.client._to_bool(z["bypass"]),
                 }
-                for z in zones
-            ],
-        }
                 for z in zones
             ],
         }
