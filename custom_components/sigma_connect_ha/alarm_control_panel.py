@@ -1,10 +1,12 @@
-import asyncio  # NEW: brief delay & double refresh
+import asyncio
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
     AlarmControlPanelState,
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.exceptions import HomeAssistantError
+
 from .const import DOMAIN
 
 
@@ -30,10 +32,6 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         self._attr_name = "Sigma Alarm Panel"
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_panel"
 
-    # ---------------------------------------------------------------------
-    # Properties
-    # ---------------------------------------------------------------------
-
     @property
     def alarm_state(self):
         """Translate integration status to HA alarm panel states."""
@@ -57,35 +55,28 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
             "sw_version": "1.0.0",
         }
 
-    # ---------------------------------------------------------------------
-    # Helpers
-    # ---------------------------------------------------------------------
-
     async def _double_refresh(self):
         """Wait briefly, then refresh twice for reliability."""
-        await asyncio.sleep(1)  # allow panel time to update
+        await asyncio.sleep(1)
         await self.coordinator.async_request_refresh()
         await asyncio.sleep(1)
         await self.coordinator.async_request_refresh()
 
-    # ---------------------------------------------------------------------
-    # AlarmControlPanelEntity callbacks
-    # ---------------------------------------------------------------------
+    async def _safe_alarm_action(self, action: str):
+        """Perform an arm/disarm action safely under lock."""
+        async with self.coordinator._lock:
+            success = await self.hass.async_add_executor_job(
+                self.coordinator.client.perform_action, action
+            )
+        if not success:
+            raise HomeAssistantError(f"Sigma alarm action '{action}' failed")
+        await self._double_refresh()
 
     async def async_alarm_disarm(self, code=None):
-        await self.hass.async_add_executor_job(
-            self.coordinator.client.perform_action, "disarm"
-        )
-        await self._double_refresh()
+        await self._safe_alarm_action("disarm")
 
     async def async_alarm_arm_away(self, code=None):
-        await self.hass.async_add_executor_job(
-            self.coordinator.client.perform_action, "arm"
-        )
-        await self._double_refresh()
+        await self._safe_alarm_action("arm")
 
     async def async_alarm_arm_home(self, code=None):
-        await self.hass.async_add_executor_job(
-            self.coordinator.client.perform_action, "stay"
-        )
-        await self._double_refresh()
+        await self._safe_alarm_action("stay")

@@ -146,7 +146,9 @@ class SigmaCoordinator(DataUpdateCoordinator):
 
 
     def _fetch(self):
-        self.client.login()
+        if not self.client.logged_in:
+            self.client.login()
+
         zones, status = self.client.get_all_from_zones()
 
         parsed, bypass = self.client.parse_alarm_status(status.get("alarm_status"))
