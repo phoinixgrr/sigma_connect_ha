@@ -145,25 +145,25 @@ class SigmaCoordinator(DataUpdateCoordinator):
         raise UpdateFailed("All fetch attempts failed")
 
 
-def _fetch(self):
-    self.client.login()
-    zones, status = self.client.get_all_from_zones()
+    def _fetch(self):
+        self.client.login()
+        zones, status = self.client.get_all_from_zones()
 
-    parsed, bypass = self.client.parse_alarm_status(status.get("alarm_status"))
-    if not parsed or status.get("battery_volt") is None or not zones:
-        raise ValueError("Incomplete data")
+        parsed, bypass = self.client.parse_alarm_status(status.get("alarm_status"))
+        if not parsed or status.get("battery_volt") is None or not zones:
+            raise ValueError("Incomplete data")
 
-    return {
-        "status": parsed,
-        "zones_bypassed": bypass,
-        "battery_volt": status.get("battery_volt"),
-        "ac_power": status.get("ac_power"),
-        "zones": [
-            {
-                **z,
-                "status": self.client._to_openclosed(z["status"]),
-                "bypass": self.client._to_bool(z["bypass"]),
-            }
-            for z in zones
-        ],
-    }
+        return {
+            "status": parsed,
+            "zones_bypassed": bypass,
+            "battery_volt": status.get("battery_volt"),
+            "ac_power": status.get("ac_power"),
+            "zones": [
+                {
+                    **z,
+                    "status": self.client._to_openclosed(z["status"]),
+                    "bypass": self.client._to_bool(z["bypass"]),
+                }
+                for z in zones
+            ],
+        }
