@@ -11,7 +11,7 @@ from .const import DOMAIN
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Create the Sigma alarm control‑panel entity."""
+    """Set up the Sigma alarm control panel entity."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     async_add_entities([SigmaAlarmPanel(coordinator, entry)])
 
@@ -34,7 +34,7 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     @property
     def alarm_state(self):
-        """Translate integration status to HA alarm panel states."""
+        """Map internal alarm state to HA AlarmControlPanelState."""
         status = self.coordinator.data.get("status")
         if status == "Disarmed":
             return AlarmControlPanelState.DISARMED
@@ -42,11 +42,11 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
             return AlarmControlPanelState.ARMED_AWAY
         if status == "Armed Perimeter":
             return AlarmControlPanelState.ARMED_HOME
-        return None
+        return AlarmControlPanelState.UNKNOWN
 
     @property
     def device_info(self):
-        """Attach this entity to the Sigma Alarm device."""
+        """Device registry metadata."""
         return {
             "identifiers": {(DOMAIN, self.entry.entry_id)},
             "name": "Sigma Alarm",
@@ -56,15 +56,15 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         }
 
     async def _double_refresh(self):
-        """Wait briefly, then refresh twice for reliability."""
-        await asyncio.sleep(1)
-        self.coordinator.client.logout()  # 👈 Force full reauth
+        """Force full re-auth and refresh state twice."""
+        await asyncio.sleep(1)  # Give panel time to apply state
+        self.coordinator.client.logout()  # Ensure token/session is new
         await self.coordinator.async_request_refresh()
         await asyncio.sleep(1)
         await self.coordinator.async_request_refresh()
 
     async def _safe_alarm_action(self, action: str):
-        """Perform an arm/disarm action safely under lock."""
+        """Perform arm/disarm operation with lock and refresh."""
         async with self.coordinator._lock:
             success = await self.hass.async_add_executor_job(
                 self.coordinator.client.perform_action, action
