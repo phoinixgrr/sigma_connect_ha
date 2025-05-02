@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 # Generic HTML‑parse retry decorator
 # ---------------------------------------------------------------------------
 
-
 def retry_html_request(func):
     """Retry any HTML‑dependent call on Attribute / Index / Type errors."""
 
@@ -49,27 +48,28 @@ def retry_html_request(func):
 
     return wrapper
 
-
 # ---------------------------------------------------------------------------
 # Sigma alarm client
 # ---------------------------------------------------------------------------
 
+# --------------------------------------------------------------------- #
+# Session / init
+# --------------------------------------------------------------------- #
 
 class SigmaClient:
     """Resilient HTTP client for Sigma alarm panels."""
-
-    # --------------------------------------------------------------------- #
-    # Session / init
-    # --------------------------------------------------------------------- #
 
     def __init__(self, base_url: str, username: str, password: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
         self.session: requests.Session = self._create_session()
+        # --------------------------------------------------------------------- #
+# Low‑level helpers
+# --------------------------------------------------------------------- #
+        self.logged_in = False
 
     def _create_session(self) -> requests.Session:
-        """Return a requests.Session with automatic HTTP retries."""
         s = requests.Session()
         retry = Retry(
             total=RETRY_TOTAL,
@@ -83,7 +83,6 @@ class SigmaClient:
         return s
 
     def logout(self) -> None:
-        """Best‑effort logout & fresh session (used at every full‑flow retry)."""
         try:
             self.session.get(f"{self.base_url}/logout.html", timeout=5)
         except Exception:
@@ -91,10 +90,7 @@ class SigmaClient:
         finally:
             self.session.close()
             self.session = self._create_session()
-
-    # --------------------------------------------------------------------- #
-    # Low‑level helpers
-    # --------------------------------------------------------------------- #
+            self.logged_in = False
 
     @retry_html_request
     def _get_soup(self, path: str) -> BeautifulSoup:
@@ -103,8 +99,9 @@ class SigmaClient:
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
 
-    # --- RC4‑style password obfuscation ----------------------------------
-
+    # --------------------------------------------------------------------- #
+    # RC4‑style password obfuscation
+    # --------------------------------------------------------------------- #
     def _encrypt(self, secret: str, token: str) -> Tuple[str, str]:
         S = list(range(256))
         j = 0
@@ -126,10 +123,6 @@ class SigmaClient:
             out.append(chr(ord(ch) ^ K))
         cipher = "".join(out)
         return "".join(f"{ord(c):02x}" for c in cipher), str(len(cipher))
-
-    # --------------------------------------------------------------------- #
-    # Login flow
-    # --------------------------------------------------------------------- #
 
     @retry_html_request
     def _submit_login(self) -> None:
@@ -156,18 +149,18 @@ class SigmaClient:
         }
         self.session.post(f"{self.base_url}/ucode", data=data, timeout=5).raise_for_status()
 
+    # --------------------------------------------------------------------- #
+    # Login flow
+    # --------------------------------------------------------------------- #
     def login(self) -> None:
-        """Full login (HTML form + PIN)."""
+        if self.logged_in:
+            return
         self._submit_login()
         self._submit_pin()
-
-    # --------------------------------------------------------------------- #
-    # Partition / status helpers
-    # --------------------------------------------------------------------- #
+        self.logged_in = True
 
     @retry_html_request
     def select_partition(self, part_id: str = "1") -> BeautifulSoup:
-        """Navigate to /panel and select a partition; returns its soup."""
         self.session.get(f"{self.base_url}/panel.html", timeout=5).raise_for_status()
         data = {"part": f"part{part_id}", "Submit": "code"}
         headers = {"Referer": f"{self.base_url}/panel.html"}
@@ -177,9 +170,7 @@ class SigmaClient:
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
 
-    # (No decorator: we want this to raise immediately)
     def get_part_status(self, soup: BeautifulSoup) -> Dict[str, Optional[object]]:
-        """Extract alarm status, battery voltage, AC power from partition page."""
         p = soup.find("p")
         alarm_status = p.find_all("span")[1].get_text(strip=True) if p else None
 
@@ -193,9 +184,7 @@ class SigmaClient:
             "ac_power": self._to_bool(ac_match.group(1)) if ac_match else None,
         }
 
-    # (No decorator for the same reason)
     def get_zones(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
-        """Fetch the zones table and parse zone statuses."""
         link = soup.find("a", string=re.compile("ζωνών", re.I))
         url = link["href"] if link else "zones.html"
         resp = self.session.get(
@@ -220,18 +209,23 @@ class SigmaClient:
                     )
         return zones
 
-    # One‑stop helper that **fetches + parses** under retry
+    # --------------------------------------------------------------------- #
+    # Fast zone refresh skipping login if already authenticated
+    # --------------------------------------------------------------------- #
     @retry_html_request
-    def _fetch_partition_status(
-        self, part_id: str = "1"
-    ) -> Tuple[Optional[str], Optional[bool]]:
+    def refresh_zones_only(self) -> List[Dict[str, str]]:
+        if not self.logged_in:
+            raise RuntimeError("Cannot refresh zones: not logged in.")
+        resp = self.session.get(f"{self.base_url}/zones.html", timeout=5)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        return self.get_zones(soup)
+
+    @retry_html_request
+    def _fetch_partition_status(self, part_id: str = "1") -> Tuple[Optional[str], Optional[bool]]:
         soup = self.select_partition(part_id)
         raw = self.get_part_status(soup)["alarm_status"]
         return self.parse_alarm_status(raw)
-
-    # --------------------------------------------------------------------- #
-    # Utility conversions
-    # --------------------------------------------------------------------- #
 
     def parse_alarm_status(self, raw_status: str) -> Tuple[Optional[str], Optional[bool]]:
         mapping = {
@@ -265,15 +259,7 @@ class SigmaClient:
             return "Open"
         return val
 
-    # --------------------------------------------------------------------- #
-    # HIGH‑LEVEL ACTION with full‑flow retry
-    # --------------------------------------------------------------------- #
-
     def perform_action(self, action: str) -> bool:
-        """
-        Arm / Disarm / Stay with full‑flow retry.
-        Returns True once the desired end‑state is confirmed.
-        """
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
         desired_map = {
             "arm": "Armed",
@@ -288,12 +274,8 @@ class SigmaClient:
         for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
             try:
                 logger.debug("Attempt %d/%d for %s", attempt, MAX_ACTION_ATTEMPTS, action)
-
-                # 1️⃣  Fresh session / full login
                 self.logout()
                 self.login()
-
-                # 2️⃣  Current state
                 current, _ = self._fetch_partition_status()
                 desired = desired_map[action]
 
@@ -301,10 +283,7 @@ class SigmaClient:
                     logger.info("Alarm already in desired state (%s)", desired)
                     return True
 
-                # 3️⃣  Trigger action
                 self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
-
-                # 4️⃣  Verify after delay
                 time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
                 new_state, _ = self._fetch_partition_status()
 
