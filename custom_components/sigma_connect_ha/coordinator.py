@@ -149,6 +149,8 @@ class SigmaCoordinator(DataUpdateCoordinator):
         if not self.client.logged_in:
             self.client.login()
 
+        self.client.logout()    # Force new session/token
+        self.client.login()
         zones, status = self.client.get_all_from_zones()
 
         parsed, bypass = self.client.parse_alarm_status(status.get("alarm_status"))
