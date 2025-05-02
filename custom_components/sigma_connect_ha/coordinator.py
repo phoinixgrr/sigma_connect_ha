@@ -146,7 +146,7 @@ class SigmaCoordinator(DataUpdateCoordinator):
 
     def _fetch(self):
         # Try fast refresh if already logged in
-                if self.client.logged_in:
+        if self.client.logged_in:
             try:
                 zones = self.client.refresh_zones_only()
                 status = {
@@ -180,6 +180,9 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     "status": self.client._to_openclosed(z["status"]),
                     "bypass": self.client._to_bool(z["bypass"]),
                 }
+                for z in zones
+            ],
+        }
                 for z in zones
             ],
         }
