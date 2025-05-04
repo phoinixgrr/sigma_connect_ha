@@ -87,8 +87,11 @@ class SigmaCoordinator(DataUpdateCoordinator):
             f"http://{base}:5053",
             entry.data[CONF_USERNAME],
             entry.data[CONF_PASSWORD],
+            send_analytics=entry.options.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
         )
 
+        self.client._config.update(entry.options)
+        
         super().__init__(
             hass,
             _LOGGER,
