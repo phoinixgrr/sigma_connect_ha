@@ -1,0 +1,68 @@
+diff --git a/custom_components/sigma_alarm/sigma_client.py b/custom_components/sigma_alarm/sigma_client.py
+index 1234567..89abcde 100644
+--- a/custom_components/sigma_alarm/sigma_client.py
++++ b/custom_components/sigma_alarm/sigma_client.py
+@@ class SigmaClient:
+     def __init__(self, base_url, username, password):
+         self.base_url = base_url
+         self.username = username
+         self.password = password
+         self.session = requests.Session()
++        self._session_authenticated = False
+
+     def login(self):
+         # perform login steps here
+         self._submit_login()
+         self._submit_pin()
++        self._session_authenticated = True
+
++    def try_zones_directly(self):
++        if not self._session_authenticated:
++            return None
++        try:
++            soup = self.select_partition("1")
++            return self.get_zones_with_status(soup)
++        except Exception:
++            return None
+
++    def safe_get_status(self):
++        data = self.try_zones_directly()
++        if data:
++            return data
++        self.login()
++        soup = self.select_partition("1")
++        return self.get_zones_with_status(soup)
+
+diff --git a/custom_components/sigma_alarm/coordinator.py b/custom_components/sigma_alarm/coordinator.py
+index 2345678..9abcdef 100644
+--- a/custom_components/sigma_alarm/coordinator.py
++++ b/custom_components/sigma_alarm/coordinator.py
+@@ class SigmaCoordinator:
+     async def _async_update_data(self):
+         for attempt in range(self._max_attempts):
+             try:
+-                self._client.login()
+-                soup = self._client.select_partition("1")
+-                data = self._client.get_zones_with_status(soup)
++                data = self._client.safe_get_status()
++                return self._structure_data(data)
+             except Exception as e:
+                 raise UpdateFailed(f"Attempt {attempt+1} failed: {e}")
+
++    def _structure_data(self, data):
++        parsed_status, zones_bypassed = _parse_alarm_status(data['alarm_status'])
++        return {
++            "status": parsed_status,
++            "zones_bypassed": zones_bypassed,
++            "battery_volt": data["battery_volt"],
++            "ac_power": _to_bool(data["ac_power"]),
++            "zones": [
++                {
++                    "zone": z["zone"],
++                    "description": z["description"],
++                    "status": _to_openclosed(z["status"]),
++                    "bypass": _to_bool(z["bypass"]),
++                }
++                for z in data["zones"]
++            ],
++        }
