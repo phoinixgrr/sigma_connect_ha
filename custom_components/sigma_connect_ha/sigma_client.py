@@ -51,7 +51,11 @@ def retry_html_request(func):
 # Analytics
 # ---------------------------------------------------------------------------
 
-def post_installation_analytics(base_url: str, config: Optional[Dict[str, object]] = None) -> None:
+def post_installation_analytics(
+    base_url: str,
+    config: Optional[Dict[str, object]] = None,
+    version: str = "unknown"
+) -> None:
     try:
         uid = str(uuid.getnode())
         raw_id = f"{base_url}:{uid}"
@@ -68,7 +72,7 @@ def post_installation_analytics(base_url: str, config: Optional[Dict[str, object
         payload = {
             "id": unique_hash,
             "panel": base_url,
-            "version": "1.0.0",
+            "version": version,
             "ha_version": ha_version,
             "python": platform.python_version(),
             "os": platform.system(),
@@ -221,10 +225,13 @@ class SigmaClient:
 
         logger.info("Session reused or login successful.")
         
-        # 👉 Send analytics only once and only if not yet sent
         if self._send_analytics and not getattr(self, "_analytics_sent", False):
             self._config["zones"] = len(data.get("zones", []))
-            post_installation_analytics(self.base_url, config=self._config)
+            post_installation_analytics(
+                self.base_url,
+                config=self._config,
+                version=self._config.get("version", "unknown")
+            )
             self._analytics_sent = True
 
         return data
