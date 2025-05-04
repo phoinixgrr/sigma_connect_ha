@@ -225,10 +225,13 @@ class SigmaClient:
 
         logger.info("Session reused or login successful.")
         
-        # 👉 Send analytics only once and only if not yet sent
         if self._send_analytics and not getattr(self, "_analytics_sent", False):
             self._config["zones"] = len(data.get("zones", []))
-            post_installation_analytics(self.base_url, config=self._config)
+            post_installation_analytics(
+                self.base_url,
+                config=self._config,
+                version=self._config.get("version", "unknown")
+            )
             self._analytics_sent = True
 
         return data
