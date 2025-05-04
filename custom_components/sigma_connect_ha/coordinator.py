@@ -29,21 +29,19 @@ from .const import (
     CONF_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
 )
+
 from . import sigma_client
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def sanitize_host(raw_host: str) -> str:
-    """Strip protocol and port from host string."""
     host = re.sub(r"^https?://", "", raw_host)
     host = re.sub(r":\d+$", "", host)
     return host.strip()
 
 
 class SigmaCoordinator(DataUpdateCoordinator):
-    """Coordinates data fetching and applies advanced options."""
-
     def __init__(self, hass: HomeAssistant, entry) -> None:
         self.hass = hass
         self.entry = entry
@@ -52,7 +50,8 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self._consecutive_failures = 0
 
         opts = entry.options
-        # Override module constants
+
+        # Propagate config options to the client module
         sigma_client.RETRY_TOTAL = opts.get(CONF_RETRY_TOTAL, DEFAULT_RETRY_TOTAL)
         sigma_client.RETRY_BACKOFF_FACTOR = opts.get(
             CONF_RETRY_BACKOFF_FACTOR, DEFAULT_RETRY_BACKOFF_FACTOR
@@ -73,14 +72,11 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self.max_total_attempts = opts.get(
             CONF_MAX_TOTAL_ATTEMPTS, DEFAULT_MAX_TOTAL_ATTEMPTS
         )
-
-        interval = opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
-        update_interval = timedelta(seconds=interval)
-
-        # how many failures before going unavailable
         self.max_consecutive_failures = opts.get(
             CONF_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_CONSECUTIVE_FAILURES
         )
+
+        update_interval = timedelta(seconds=opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL))
 
         base = sanitize_host(entry.data[CONF_HOST])
         self.client = sigma_client.SigmaClient(
@@ -103,13 +99,11 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     self._retry_with_backoff
                 )
                 self._last_data = data
-                # reset failure counter
                 self._consecutive_failures = 0
                 return data
             except Exception as err:
                 self._consecutive_failures += 1
 
-                # if we have old data and haven't hit threshold yet, return old data
                 if (
                     self._last_data is not None
                     and self._consecutive_failures < self.max_consecutive_failures
@@ -122,7 +116,6 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     )
                     return self._last_data
 
-                # otherwise mark unavailable
                 _LOGGER.error(
                     "Sigma fetch failed (%d/%d), marking unavailable: %s",
                     self._consecutive_failures,
@@ -144,13 +137,10 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     time.sleep(sigma_client.RETRY_BACKOFF_FACTOR * (2 ** (i - 1)))
         raise UpdateFailed("All fetch attempts failed")
 
-
     def _fetch(self):
-        if not self.client.logged_in:
-            self.client.login()
-
-        self.client.logout()    # Force new session/token
+        self.client.logout()  # Always start fresh
         self.client.login()
+
         zones, status = self.client.get_all_from_zones()
 
         parsed, bypass = self.client.parse_alarm_status(status.get("alarm_status"))
