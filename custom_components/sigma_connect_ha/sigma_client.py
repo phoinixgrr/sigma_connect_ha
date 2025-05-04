@@ -179,6 +179,8 @@ class SigmaClient:
         if data:
             logger.warning("Session reused successfully.") 
             return data
+
+        logger.warning("Session expired or invalid — performing full login.")
         self.logout()
         self.login()
         soup = self.select_partition()
