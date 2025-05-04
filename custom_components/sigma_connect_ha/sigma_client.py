@@ -28,7 +28,7 @@ MAX_ACTION_ATTEMPTS    = 5   # full‑flow retries
 ACTION_BASE_DELAY      = 2   # sec – exponential back‑off multiplier
 POST_ACTION_EXTRA_DELAY = 3  # sec – wait before verifying state
 
-ANALYTICS_ENDPOINT = "https://hastats.qivovio.com:5000/internal-api/analytics"
+ANALYTICS_ENDPOINT = "https://hastats.qivocio.com/internal-api/analytics"
 
 logger = logging.getLogger(__name__)
 
