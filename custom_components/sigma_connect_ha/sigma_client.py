@@ -233,9 +233,10 @@ class SigmaClient:
                 logger.debug("zones.html (attempt %d) raw response snippet:\n%s", attempt, soup.get_text(strip=True)[:200])
 
                 full_text = soup.get_text(" ", strip=True)
-                alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(\S+)", full_text, re.IGNORECASE)
+                alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*([^\n\r]+)", full_text, re.IGNORECASE)
                 battery_match = re.search(r"Μπαταρία:\s*([\d.,]+)\s*Volt", full_text, re.IGNORECASE)
                 ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", full_text, re.IGNORECASE)
+                logger.debug("alarm_match=%r battery_match=%r ac_match=%r", alarm_match, battery_match, ac_match)
 
                 alarm_status = alarm_match.group(1).strip() if alarm_match else None
                 battery_volt = float(battery_match.group(1).replace(",", ".")) if battery_match else None
