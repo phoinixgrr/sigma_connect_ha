@@ -186,28 +186,23 @@ class SigmaClient:
         }
 
     def get_zones(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
-        link = soup.find("a", string=re.compile("ζωνών", re.I))
-        url = link["href"] if link else "zones.html"
-        resp = self.session.get(
-            f"{self.base_url}/{url.lstrip('/')}",
-            timeout=5,
-            headers={"Referer": f"{self.base_url}/part.cgi"},
-        )
-        resp.raise_for_status()
-        table = BeautifulSoup(resp.text, "html.parser").find("table", class_="normaltable")
         zones = []
-        if table:
-            for row in table.find_all("tr")[1:]:
-                cols = row.find_all("td")
-                if len(cols) >= 4:
-                    zones.append(
-                        {
-                            "zone": cols[0].get_text(strip=True),
-                            "description": cols[1].get_text(strip=True),
-                            "status": cols[2].get_text(strip=True),
-                            "bypass": cols[3].get_text(strip=True),
-                        }
-                    )
+        table = soup.find("table", class_=lambda x: x and "normaltable" in x)
+        if not table:
+            logger.warning("No zone table found in zones.html")
+            return zones
+
+        for row in table.find_all("tr")[1:]:
+            cols = row.find_all("td")
+            if len(cols) >= 4:
+                zones.append(
+                    {
+                        "zone": cols[0].get_text(strip=True),
+                        "description": cols[1].get_text(strip=True),
+                        "status": cols[2].get_text(strip=True),
+                        "bypass": cols[3].get_text(strip=True),
+                    }
+                )
         return zones
 
 
@@ -220,7 +215,6 @@ class SigmaClient:
 
                 # ✅ Ensure correct character decoding (Greek)
                 resp.encoding = "ISO-8859-7"
-
                 resp.raise_for_status()
 
                 # ✅ Save raw HTML for inspection
@@ -229,44 +223,24 @@ class SigmaClient:
 
                 soup = BeautifulSoup(resp.text, "html.parser")
 
-                # 💬 DEBUG: Log the first 200 characters of the page
+                # 💬 DEBUG
                 logger.debug("zones.html (attempt %d) raw response snippet:\n%s", attempt, soup.get_text(strip=True)[:200])
+
+                # ✅ moved after soup is ready
+                zones = self.get_zones(soup)
 
                 full_text = soup.get_text(" ", strip=True)
                 alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*([^\n\r]+)", full_text, re.IGNORECASE)
                 battery_match = re.search(r"Μπαταρία:\s*([\d.,]+)\s*Volt", full_text, re.IGNORECASE)
                 ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", full_text, re.IGNORECASE)
+
                 logger.debug("alarm_match=%r battery_match=%r ac_match=%r", alarm_match, battery_match, ac_match)
 
                 alarm_status = alarm_match.group(1).strip() if alarm_match else None
                 battery_volt = float(battery_match.group(1).replace(",", ".")) if battery_match else None
                 ac_power = self._to_bool(ac_match.group(1)) if ac_match else None
 
-                # 💬 DEBUG: Show parsed status
-                logger.debug(
-                    "Parsed alarm_status=%s, battery_volt=%s, ac_power=%s",
-                    alarm_status, battery_volt, ac_power
-                )
-
-                table = soup.find("table", class_="normaltable")
-                if not table:
-                    logger.debug("zones.html did not contain the expected table structure")
-
-                zones = []
-                if table:
-                    for row in table.find_all("tr")[1:]:
-                        cols = row.find_all("td")
-                        if len(cols) >= 4:
-                            zones.append(
-                                {
-                                    "zone": cols[0].get_text(strip=True),
-                                    "description": cols[1].get_text(strip=True),
-                                    "status": cols[2].get_text(strip=True),
-                                    "bypass": cols[3].get_text(strip=True),
-                                }
-                            )
-
-                logger.debug("Parsed %d zones", len(zones))
+                logger.debug("Parsed alarm_status=%s, battery_volt=%s, ac_power=%s", alarm_status, battery_volt, ac_power)
 
                 if not alarm_status or battery_volt is None or not zones:
                     logger.warning("Incomplete data after parsing attempt %d", attempt)
@@ -287,6 +261,7 @@ class SigmaClient:
                 time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
 
         raise RuntimeError("Failed to fetch valid data from zones.html after retries")
+
 
     # --------------------------------------------------------------------- #
     # Fast zone refresh skipping login if already authenticated
