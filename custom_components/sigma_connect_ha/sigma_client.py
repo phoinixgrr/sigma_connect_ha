@@ -165,14 +165,27 @@ class SigmaClient:
 
     def try_zones_directly(self):
         if not self._session_authenticated:
+            logger.debug("Skipping session reuse: not authenticated.")
             return None
         try:
             soup = self.select_partition()
-            zones = self.get_zones(soup)
-            status = self.get_part_status(soup)
-            return {"zones": zones, **status}
-        except Exception:
+            zones_url = self._extract_zones_url(soup)
+            zones_resp = self.session.get(f"{self.base_url}/{zones_url}", headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5)
+            zones_resp.raise_for_status()
+            zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+            result = self.parse_zones_html(zones_soup)
+
+            # Check if required data is present
+            if not result.get("alarm_status") or result.get("battery_volt") is None or not result.get("zones"):
+                logger.warning("Session reuse failed: zones.html content incomplete.")
+                return None
+
+            return result
+
+        except Exception as e:
+            logger.warning("Session reuse failed: %s", e)
             return None
+
 
     def safe_get_status(self):
         data = self.try_zones_directly()
