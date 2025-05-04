@@ -100,6 +100,7 @@ class SigmaClient:
         self.session: requests.Session = self._create_session()
         self._session_authenticated = False
         self._send_analytics = send_analytics
+        self._analytics_sent = False
 
     def _create_session(self) -> requests.Session:
         s = requests.Session()
@@ -181,8 +182,6 @@ class SigmaClient:
         self._submit_login()
         self._submit_pin()
         self._session_authenticated = True
-        if self._send_analytics:
-            post_installation_analytics(self.base_url)
 
     def try_zones_directly(self):
         if not self._session_authenticated:
@@ -210,19 +209,26 @@ class SigmaClient:
 
     def safe_get_status(self):
         data = self.try_zones_directly()
-        if data:
-            logger.info("Session reused successfully.") 
-            return data
+        if not data:
+            logger.info("Session expired or invalid — performing full login.")
+            self.logout()
+            self.login()
+            soup = self.select_partition()
+            zones_url = self._extract_zones_url(soup)
+            zones_resp = self.session.get(f"{self.base_url}/{zones_url}", headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5)
+            zones_resp.raise_for_status()
+            zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+            data = self.parse_zones_html(zones_soup)
 
-        logger.info("Session expired or invalid — performing full login.")
-        self.logout()
-        self.login()
-        soup = self.select_partition()
-        zones_url = self._extract_zones_url(soup)
-        zones_resp = self.session.get(f"{self.base_url}/{zones_url}", headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5)
-        zones_resp.raise_for_status()
-        zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
-        return self.parse_zones_html(zones_soup)
+        logger.info("Session reused or login successful.")
+        
+        # 👉 Send analytics only once and only if not yet sent
+        if self._send_analytics and not getattr(self, "_analytics_sent", False):
+            self._config["zones"] = len(data.get("zones", []))
+            post_installation_analytics(self.base_url, config=self._config)
+            self._analytics_sent = True
+
+        return data
 
 
     def _extract_zones_url(self, soup: BeautifulSoup) -> str:
