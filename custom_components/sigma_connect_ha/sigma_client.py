@@ -188,23 +188,40 @@ class SigmaClient:
     def get_zones(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
         zones = []
         table = soup.find("table", class_=lambda x: x and "normaltable" in x)
+
         if not table:
             logger.warning("No zone table found in zones.html")
             return zones
 
-        for row in table.find_all("tr")[1:]:
+        for row in table.find_all("tr")[1:]:  # skip header row
             cols = row.find_all("td")
-            if len(cols) >= 4:
-                zones.append(
-                    {
-                        "zone": cols[0].get_text(strip=True),
-                        "description": cols[1].get_text(strip=True),
-                        "status": cols[2].get_text(strip=True),
-                        "bypass": cols[3].find("td").get_text(strip=True),
-                    }
-                )
-        return zones
+            if len(cols) < 4:
+                continue
 
+            try:
+                zone = cols[0].get_text(strip=True)
+                description = cols[1].get_text(strip=True)
+                status = cols[2].get_text(strip=True)
+
+                # Bypass is nested inside a second table: extract first <td> inside that
+                bypass_table = cols[3].find("table")
+                if not bypass_table:
+                    bypass = None
+                else:
+                    bypass_cells = bypass_table.find_all("td")
+                    bypass = bypass_cells[0].get_text(strip=True) if bypass_cells else None
+
+                zones.append({
+                    "zone": zone,
+                    "description": description,
+                    "status": status,
+                    "bypass": bypass,
+                })
+
+            except Exception as e:
+                logger.warning("Failed to parse zone row: %s", e)
+
+        return zones
 
     def get_all_from_zones(self) -> Tuple[List[Dict[str, str]], Dict[str, Optional[object]]]:
         for attempt in range(1, RETRY_ATTEMPTS_FOR_HTML + 1):
