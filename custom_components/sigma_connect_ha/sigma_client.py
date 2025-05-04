@@ -67,6 +67,7 @@ class SigmaClient:
         self.username = username
         self.password = password
         self.session: requests.Session = self._create_session()
+        self._session_authenticated = False
 
     def _create_session(self) -> requests.Session:
         """Return a requests.Session with automatic HTTP retries."""
@@ -160,6 +161,33 @@ class SigmaClient:
         """Full login (HTML form + PIN)."""
         self._submit_login()
         self._submit_pin()
+        self._session_authenticated = True
+
+    def try_zones_directly(self):
+        if not self._session_authenticated:
+            return None
+        try:
+            soup = self.select_partition()
+            zones = self.get_zones(soup)
+            status = self.get_part_status(soup)
+            return {"zones": zones, **status}
+        except Exception:
+            return None
+
+    def safe_get_status(self):
+        data = self.try_zones_directly()
+        if data:
+            logger.info("Session reused successfully.") 
+            return data
+
+        logger.info("Session expired or invalid — performing full login.")
+        self.logout()
+        self.login()
+        soup = self.select_partition()
+        zones = self.get_zones(soup)
+        status = self.get_part_status(soup)
+        return {"zones": zones, **status}
+
 
     # --------------------------------------------------------------------- #
     # Partition / status helpers
