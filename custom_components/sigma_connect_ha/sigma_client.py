@@ -2,7 +2,12 @@ import logging
 import random
 import re
 import time
+import uuid
+import hashlib
+import platform
+import datetime
 from typing import List, Dict, Tuple, Optional
+import locale
 
 import requests
 from bs4 import BeautifulSoup
@@ -23,54 +28,80 @@ MAX_ACTION_ATTEMPTS    = 5   # full‑flow retries
 ACTION_BASE_DELAY      = 2   # sec – exponential back‑off multiplier
 POST_ACTION_EXTRA_DELAY = 3  # sec – wait before verifying state
 
+# ANALYTICS_ENDPOINT = "https://hastats.qivocio.com:8080"
+ANALYTICS_ENDPOINT = "http://10.255.0.2:5000"
+ 
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Generic HTML‑parse retry decorator
 # ---------------------------------------------------------------------------
 
-
 def retry_html_request(func):
-    """Retry any HTML‑dependent call on Attribute / Index / Type errors."""
-
     def wrapper(*args, **kwargs):
         for attempt in range(1, RETRY_ATTEMPTS_FOR_HTML + 1):
             try:
                 return func(*args, **kwargs)
             except (AttributeError, IndexError, TypeError) as exc:
-                logger.warning(
-                    "HTML parse failed (%d/%d): %s",
-                    attempt,
-                    RETRY_ATTEMPTS_FOR_HTML,
-                    exc,
-                )
+                logger.warning("HTML parse failed (%d/%d): %s", attempt, RETRY_ATTEMPTS_FOR_HTML, exc)
                 time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
         raise RuntimeError("HTML parsing failed after max attempts")
-
     return wrapper
 
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+def post_installation_analytics(base_url: str, config: Optional[Dict[str, object]] = None) -> None:
+    try:
+        uid = str(uuid.getnode())
+        raw_id = f"{base_url}:{uid}"
+        unique_hash = hashlib.sha256(raw_id.encode()).hexdigest()
+
+        try:
+            import homeassistant.const as hass_const
+            ha_version = hass_const.__version__
+        except ImportError:
+            ha_version = None
+
+        config = config or {}
+
+        payload = {
+            "id": unique_hash,
+            "panel": base_url,
+            "version": "1.0.0",
+            "ha_version": ha_version,
+            "python": platform.python_version(),
+            "os": platform.system(),
+            "os_version": platform.platform(),
+            "arch": platform.machine(),
+            "time": datetime.datetime.utcnow().isoformat() + "Z",
+            "locale": locale.getdefaultlocale()[0] if locale.getdefaultlocale() else None,
+            "tz": time.tzname[0] if time.tzname else None,
+            "zones": config.get("zones"),
+            "config": {k: v for k, v in config.items() if k != "zones"},
+        }
+
+        requests.post(ANALYTICS_ENDPOINT, json=payload, timeout=3)
+        logger.info("Sigma analytics posted successfully.")
+    except Exception as e:
+        logger.debug("Failed to post analytics: %s", e)
 
 # ---------------------------------------------------------------------------
 # Sigma alarm client
 # ---------------------------------------------------------------------------
 
-
 class SigmaClient:
-    """Resilient HTTP client for Sigma alarm panels."""
-
-    # --------------------------------------------------------------------- #
-    # Session / init
-    # --------------------------------------------------------------------- #
-
-    def __init__(self, base_url: str, username: str, password: str) -> None:
+    def __init__(self, base_url: str, username: str, password: str, send_analytics: bool = True) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
         self.session: requests.Session = self._create_session()
         self._session_authenticated = False
+        self._send_analytics = send_analytics
 
     def _create_session(self) -> requests.Session:
-        """Return a requests.Session with automatic HTTP retries."""
         s = requests.Session()
         retry = Retry(
             total=RETRY_TOTAL,
@@ -84,7 +115,6 @@ class SigmaClient:
         return s
 
     def logout(self) -> None:
-        """Best‑effort logout & fresh session (used at every full‑flow retry)."""
         try:
             self.session.get(f"{self.base_url}/logout.html", timeout=5)
         except Exception:
@@ -93,18 +123,12 @@ class SigmaClient:
             self.session.close()
             self.session = self._create_session()
 
-    # --------------------------------------------------------------------- #
-    # Low‑level helpers
-    # --------------------------------------------------------------------- #
-
     @retry_html_request
     def _get_soup(self, path: str) -> BeautifulSoup:
         url = f"{self.base_url}/{path.lstrip('/')}"
         resp = self.session.get(url, timeout=5)
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
-
-    # --- RC4‑style password obfuscation ----------------------------------
 
     def _encrypt(self, secret: str, token: str) -> Tuple[str, str]:
         S = list(range(256))
@@ -127,10 +151,6 @@ class SigmaClient:
             out.append(chr(ord(ch) ^ K))
         cipher = "".join(out)
         return "".join(f"{ord(c):02x}" for c in cipher), str(len(cipher))
-
-    # --------------------------------------------------------------------- #
-    # Login flow
-    # --------------------------------------------------------------------- #
 
     @retry_html_request
     def _submit_login(self) -> None:
@@ -158,10 +178,11 @@ class SigmaClient:
         self.session.post(f"{self.base_url}/ucode", data=data, timeout=5).raise_for_status()
 
     def login(self) -> None:
-        """Full login (HTML form + PIN)."""
         self._submit_login()
         self._submit_pin()
         self._session_authenticated = True
+        if self._send_analytics:
+            post_installation_analytics(self.base_url)
 
     def try_zones_directly(self):
         if not self._session_authenticated:
