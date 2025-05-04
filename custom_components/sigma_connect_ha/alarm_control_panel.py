@@ -58,7 +58,7 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     async def _double_refresh(self):
         """Force full re-auth and refresh state twice."""
         await asyncio.sleep(1)  # Give panel time to apply state
-        self.coordinator.client.logout()  # Ensure token/session is new
+        await self.hass.async_add_executor_job(self.coordinator.client.logout)
         await self.coordinator.async_request_refresh()
         await asyncio.sleep(1)
         await self.coordinator.async_request_refresh()

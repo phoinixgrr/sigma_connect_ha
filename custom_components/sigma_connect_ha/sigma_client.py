@@ -172,7 +172,8 @@ class SigmaClient:
 
     def get_part_status(self, soup: BeautifulSoup) -> Dict[str, Optional[object]]:
         p = soup.find("p")
-        alarm_status = p.find_all("span")[1].get_text(strip=True) if p else None
+        spans = p.find_all("span") if p else []
+        alarm_status = spans[1].get_text(strip=True) if len(spans) >= 2 else None
 
         text = soup.get_text("\n", strip=True)
         battery = re.search(r"(\d+\.?\d*)\s*Volt", text)
