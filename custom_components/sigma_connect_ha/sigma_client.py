@@ -184,9 +184,16 @@ class SigmaClient:
         self.logout()
         self.login()
         soup = self.select_partition()
-        zones = self.get_zones(soup)
-        status = self.get_part_status(soup)
-        return {"zones": zones, **status}
+        zones_url = self._extract_zones_url(soup)
+        zones_resp = self.session.get(f"{self.base_url}/{zones_url}", headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5)
+        zones_resp.raise_for_status()
+        zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+        return self.parse_zones_html(zones_soup)
+
+
+    def _extract_zones_url(self, soup: BeautifulSoup) -> str:
+        link = soup.find("a", string=re.compile("ζωνών", re.I))
+        return link["href"] if link and link.get("href") else "zones.html"\
 
 
     # --------------------------------------------------------------------- #
@@ -205,48 +212,6 @@ class SigmaClient:
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
 
-    # (No decorator: we want this to raise immediately)
-    def get_part_status(self, soup: BeautifulSoup) -> Dict[str, Optional[object]]:
-        """Extract alarm status, battery voltage, AC power from partition page."""
-        p = soup.find("p")
-        alarm_status = p.find_all("span")[1].get_text(strip=True) if p else None
-
-        text = soup.get_text("\n", strip=True)
-        battery = re.search(r"(\d+\.?\d*)\s*Volt", text)
-        ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", text, re.IGNORECASE)
-
-        return {
-            "alarm_status": alarm_status,
-            "battery_volt": float(battery.group(1)) if battery else None,
-            "ac_power": self._to_bool(ac_match.group(1)) if ac_match else None,
-        }
-
-    # (No decorator for the same reason)
-    def get_zones(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
-        """Fetch the zones table and parse zone statuses."""
-        link = soup.find("a", string=re.compile("ζωνών", re.I))
-        url = link["href"] if link else "zones.html"
-        resp = self.session.get(
-            f"{self.base_url}/{url.lstrip('/')}",
-            timeout=5,
-            headers={"Referer": f"{self.base_url}/part.cgi"},
-        )
-        resp.raise_for_status()
-        table = BeautifulSoup(resp.text, "html.parser").find("table", class_="normaltable")
-        zones = []
-        if table:
-            for row in table.find_all("tr")[1:]:
-                cols = row.find_all("td")
-                if len(cols) >= 4:
-                    zones.append(
-                        {
-                            "zone": cols[0].get_text(strip=True),
-                            "description": cols[1].get_text(strip=True),
-                            "status": cols[2].get_text(strip=True),
-                            "bypass": cols[3].get_text(strip=True),
-                        }
-                    )
-        return zones
 
     # One‑stop helper that **fetches + parses** under retry
     @retry_html_request
@@ -260,6 +225,44 @@ class SigmaClient:
     # --------------------------------------------------------------------- #
     # Utility conversions
     # --------------------------------------------------------------------- #
+
+    def parse_zones_html(self, soup: BeautifulSoup) -> Dict[str, object]:
+        """Extract alarm status, battery voltage, AC power, and zones from zones.html content."""
+        text = soup.get_text("\n", strip=True)
+
+        # 1. Alarm status from: "Τμήμα 1 : ΑΦΟΠΛΙΣΜΕΝΟ"
+        alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(.+)", text)
+        alarm_status = alarm_match.group(1).strip() if alarm_match else None
+
+        # 2. Battery: "Μπαταρία: 13.5 Volt"
+        battery_match = re.search(r"Μπαταρία:\s*([\d.]+)\s*Volt", text)
+        battery_volt = float(battery_match.group(1)) if battery_match else None
+
+        # 3. AC Power: "Παροχή 230V: NAI"
+        ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", text, re.IGNORECASE)
+        ac_power = self._to_bool(ac_match.group(1)) if ac_match else None
+
+        # 4. Zones
+        table = soup.find("table", class_="normaltable")
+        zones = []
+        if table:
+            for row in table.find_all("tr")[1:]:
+                cols = row.find_all("td")
+                if len(cols) >= 4:
+                    zones.append({
+                        "zone": cols[0].get_text(strip=True),
+                        "description": cols[1].get_text(strip=True),
+                        "status": cols[2].get_text(strip=True),
+                        "bypass": cols[3].get_text(strip=True),
+                    })
+
+        return {
+            "alarm_status": alarm_status,
+            "battery_volt": battery_volt,
+            "ac_power": ac_power,
+            "zones": zones,
+        }
+
 
     def parse_alarm_status(self, raw_status: str) -> Tuple[Optional[str], Optional[bool]]:
         mapping = {
