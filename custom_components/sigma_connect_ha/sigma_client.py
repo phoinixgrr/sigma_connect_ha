@@ -216,9 +216,16 @@ class SigmaClient:
                 headers = {"Referer": f"{self.base_url}/part.cgi"}
                 resp = self.session.get(url, timeout=5, headers=headers)
                 resp.raise_for_status()
+
+                # ✅ Save response to debug file
+                with open("/config/zones_debug.html", "w", encoding="utf-8") as f:
+                    f.write(resp.text)
+
                 soup = BeautifulSoup(resp.text, "html.parser")
 
-                # Extract key values
+                # 💬 DEBUG: Log the first 200 characters of the page
+                logger.debug("zones.html (attempt %d) raw response snippet:\n%s", attempt, soup.get_text(strip=True)[:200])
+
                 full_text = soup.get_text(" ", strip=True)
                 alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(\S+)", full_text)
                 battery_match = re.search(r"Μπαταρία:\s*([\d.]+)\s*Volt", full_text)
@@ -228,8 +235,16 @@ class SigmaClient:
                 battery_volt = float(battery_match.group(1)) if battery_match else None
                 ac_power = self._to_bool(ac_match.group(1)) if ac_match else None
 
-                # Parse zones table
+                # 💬 DEBUG: Show parsed status
+                logger.debug(
+                    "Parsed alarm_status=%s, battery_volt=%s, ac_power=%s",
+                    alarm_status, battery_volt, ac_power
+                )
+
                 table = soup.find("table", class_="normaltable")
+                if not table:
+                    logger.debug("zones.html did not contain the expected table structure")
+
                 zones = []
                 if table:
                     for row in table.find_all("tr")[1:]:
@@ -244,7 +259,10 @@ class SigmaClient:
                                 }
                             )
 
+                logger.debug("Parsed %d zones", len(zones))
+
                 if not alarm_status or battery_volt is None or not zones:
+                    logger.warning("Incomplete data after parsing attempt %d", attempt)
                     raise ValueError("Incomplete data")
 
                 return zones, {
@@ -258,7 +276,6 @@ class SigmaClient:
                 time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
 
         raise RuntimeError("Failed to fetch valid data from zones.html after retries")
-
 
     # --------------------------------------------------------------------- #
     # Fast zone refresh skipping login if already authenticated
@@ -310,6 +327,7 @@ class SigmaClient:
             return "Open"
         return val
 
+
     def perform_action(self, action: str) -> bool:
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
         desired_map = {
@@ -336,11 +354,14 @@ class SigmaClient:
 
                 self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
                 time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
+
+                # ✅ Re-login again to reinitialize session (action invalidates it)
+                self.logout()
+                self.login()
                 new_state, _ = self._fetch_partition_status()
 
                 if new_state == desired:
                     logger.info("Action '%s' successful on attempt %d", action, attempt)
-                    self.logout() 
                     return True
 
                 logger.warning(
