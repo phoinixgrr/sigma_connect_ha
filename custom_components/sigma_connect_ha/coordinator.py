@@ -28,6 +28,8 @@ from .const import (
     DEFAULT_POST_ACTION_EXTRA_DELAY,
     CONF_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
+    CONF_ENABLE_ANALYTICS,
+    DEFAULT_ENABLE_ANALYTICS,
 )
 from . import sigma_client
 
@@ -87,8 +89,11 @@ class SigmaCoordinator(DataUpdateCoordinator):
             f"http://{base}:5053",
             entry.data[CONF_USERNAME],
             entry.data[CONF_PASSWORD],
+            send_analytics=entry.options.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
         )
 
+        self.client._config.update(entry.options)
+        
         super().__init__(
             hass,
             _LOGGER,
