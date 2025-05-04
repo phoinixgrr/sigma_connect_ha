@@ -18,7 +18,13 @@ async def async_setup(hass: HomeAssistant, _: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Create the config‑entry and a device so the tile is shown."""
+    from homeassistant.loader import async_get_integration
+
+    integration = await async_get_integration(hass, "sigma_connect_ha")
+    version = integration.manifest.get("version", "unknown")
+
     coordinator = SigmaCoordinator(hass, entry)
+    coordinator.client._config["version"] = version
     await coordinator.async_config_entry_first_refresh()
 
     # ---- mandatory: register one device so HA shows a card ----

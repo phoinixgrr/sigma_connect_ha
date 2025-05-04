@@ -51,7 +51,11 @@ def retry_html_request(func):
 # Analytics
 # ---------------------------------------------------------------------------
 
-def post_installation_analytics(base_url: str, config: Optional[Dict[str, object]] = None) -> None:
+def post_installation_analytics(
+    base_url: str,
+    config: Optional[Dict[str, object]] = None,
+    version: str = "unknown"
+) -> None:
     try:
         uid = str(uuid.getnode())
         raw_id = f"{base_url}:{uid}"
@@ -68,7 +72,7 @@ def post_installation_analytics(base_url: str, config: Optional[Dict[str, object
         payload = {
             "id": unique_hash,
             "panel": base_url,
-            "version": "1.0.0",
+            "version": version,
             "ha_version": ha_version,
             "python": platform.python_version(),
             "os": platform.system(),
