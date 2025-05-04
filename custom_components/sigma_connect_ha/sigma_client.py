@@ -67,6 +67,7 @@ class SigmaClient:
         self.username = username
         self.password = password
         self.session: requests.Session = self._create_session()
+        self._session_authenticated = False
 
     def _create_session(self) -> requests.Session:
         """Return a requests.Session with automatic HTTP retries."""
@@ -160,6 +161,53 @@ class SigmaClient:
         """Full login (HTML form + PIN)."""
         self._submit_login()
         self._submit_pin()
+        self._session_authenticated = True
+
+    def try_zones_directly(self):
+        if not self._session_authenticated:
+            logger.debug("Skipping session reuse: not authenticated.")
+            return None
+        try:
+            soup = self.select_partition()
+            zones_url = self._extract_zones_url(soup)
+            zones_resp = self.session.get(f"{self.base_url}/{zones_url}", headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5)
+            zones_resp.raise_for_status()
+            zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+            result = self.parse_zones_html(zones_soup)
+
+            # Check if required data is present
+            if not result.get("alarm_status") or result.get("battery_volt") is None or not result.get("zones"):
+                logger.warning("Session reuse failed: zones.html content incomplete.")
+                return None
+
+            return result
+
+        except Exception as e:
+            logger.warning("Session reuse failed: %s", e)
+            return None
+
+
+    def safe_get_status(self):
+        data = self.try_zones_directly()
+        if data:
+            logger.info("Session reused successfully.") 
+            return data
+
+        logger.info("Session expired or invalid — performing full login.")
+        self.logout()
+        self.login()
+        soup = self.select_partition()
+        zones_url = self._extract_zones_url(soup)
+        zones_resp = self.session.get(f"{self.base_url}/{zones_url}", headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5)
+        zones_resp.raise_for_status()
+        zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+        return self.parse_zones_html(zones_soup)
+
+
+    def _extract_zones_url(self, soup: BeautifulSoup) -> str:
+        link = soup.find("a", string=re.compile("ζωνών", re.I))
+        return link["href"] if link and link.get("href") else "zones.html"\
+
 
     # --------------------------------------------------------------------- #
     # Partition / status helpers
@@ -177,48 +225,6 @@ class SigmaClient:
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
 
-    # (No decorator: we want this to raise immediately)
-    def get_part_status(self, soup: BeautifulSoup) -> Dict[str, Optional[object]]:
-        """Extract alarm status, battery voltage, AC power from partition page."""
-        p = soup.find("p")
-        alarm_status = p.find_all("span")[1].get_text(strip=True) if p else None
-
-        text = soup.get_text("\n", strip=True)
-        battery = re.search(r"(\d+\.?\d*)\s*Volt", text)
-        ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", text, re.IGNORECASE)
-
-        return {
-            "alarm_status": alarm_status,
-            "battery_volt": float(battery.group(1)) if battery else None,
-            "ac_power": self._to_bool(ac_match.group(1)) if ac_match else None,
-        }
-
-    # (No decorator for the same reason)
-    def get_zones(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
-        """Fetch the zones table and parse zone statuses."""
-        link = soup.find("a", string=re.compile("ζωνών", re.I))
-        url = link["href"] if link else "zones.html"
-        resp = self.session.get(
-            f"{self.base_url}/{url.lstrip('/')}",
-            timeout=5,
-            headers={"Referer": f"{self.base_url}/part.cgi"},
-        )
-        resp.raise_for_status()
-        table = BeautifulSoup(resp.text, "html.parser").find("table", class_="normaltable")
-        zones = []
-        if table:
-            for row in table.find_all("tr")[1:]:
-                cols = row.find_all("td")
-                if len(cols) >= 4:
-                    zones.append(
-                        {
-                            "zone": cols[0].get_text(strip=True),
-                            "description": cols[1].get_text(strip=True),
-                            "status": cols[2].get_text(strip=True),
-                            "bypass": cols[3].get_text(strip=True),
-                        }
-                    )
-        return zones
 
     # One‑stop helper that **fetches + parses** under retry
     @retry_html_request
@@ -232,6 +238,44 @@ class SigmaClient:
     # --------------------------------------------------------------------- #
     # Utility conversions
     # --------------------------------------------------------------------- #
+
+    def parse_zones_html(self, soup: BeautifulSoup) -> Dict[str, object]:
+        """Extract alarm status, battery voltage, AC power, and zones from zones.html content."""
+        text = soup.get_text("\n", strip=True)
+
+        # 1. Alarm status from: "Τμήμα 1 : ΑΦΟΠΛΙΣΜΕΝΟ"
+        alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(.+)", text)
+        alarm_status = alarm_match.group(1).strip() if alarm_match else None
+
+        # 2. Battery: "Μπαταρία: 13.5 Volt"
+        battery_match = re.search(r"Μπαταρία:\s*([\d.]+)\s*Volt", text)
+        battery_volt = float(battery_match.group(1)) if battery_match else None
+
+        # 3. AC Power: "Παροχή 230V: NAI"
+        ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", text, re.IGNORECASE)
+        ac_power = self._to_bool(ac_match.group(1)) if ac_match else None
+
+        # 4. Zones
+        table = soup.find("table", class_="normaltable")
+        zones = []
+        if table:
+            for row in table.find_all("tr")[1:]:
+                cols = row.find_all("td")
+                if len(cols) >= 4:
+                    zones.append({
+                        "zone": cols[0].get_text(strip=True),
+                        "description": cols[1].get_text(strip=True),
+                        "status": cols[2].get_text(strip=True),
+                        "bypass": cols[3].get_text(strip=True),
+                    })
+
+        return {
+            "alarm_status": alarm_status,
+            "battery_volt": battery_volt,
+            "ac_power": ac_power,
+            "zones": zones,
+        }
+
 
     def parse_alarm_status(self, raw_status: str) -> Tuple[Optional[str], Optional[bool]]:
         mapping = {
@@ -270,10 +314,6 @@ class SigmaClient:
     # --------------------------------------------------------------------- #
 
     def perform_action(self, action: str) -> bool:
-        """
-        Arm / Disarm / Stay with full‑flow retry.
-        Returns True once the desired end‑state is confirmed.
-        """
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
         desired_map = {
             "arm": "Armed",
@@ -289,24 +329,41 @@ class SigmaClient:
             try:
                 logger.debug("Attempt %d/%d for %s", attempt, MAX_ACTION_ATTEMPTS, action)
 
-                # 1️⃣  Fresh session / full login
-                self.logout()
-                self.login()
+                # Current state
+                zones_url = self._extract_zones_url(self.select_partition())
+                zones_resp = self.session.get(
+                    f"{self.base_url}/{zones_url}",
+                    headers={"Referer": f"{self.base_url}/part.cgi"},
+                    timeout=5,
+                )
+                zones_resp.raise_for_status()
+                zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                current_status, _ = self.parse_alarm_status(
+                    self.parse_zones_html(zones_soup).get("alarm_status")
+                )
 
-                # 2️⃣  Current state
-                current, _ = self._fetch_partition_status()
                 desired = desired_map[action]
 
-                if current == desired:
+                if current_status == desired:
                     logger.info("Alarm already in desired state (%s)", desired)
                     return True
 
-                # 3️⃣  Trigger action
+                # Trigger action
                 self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
 
-                # 4️⃣  Verify after delay
+                # Wait and re-check
                 time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
-                new_state, _ = self._fetch_partition_status()
+                zones_url = self._extract_zones_url(self.select_partition())
+                zones_resp = self.session.get(
+                    f"{self.base_url}/{zones_url}",
+                    headers={"Referer": f"{self.base_url}/part.cgi"},
+                    timeout=5,
+                )
+                zones_resp.raise_for_status()
+                zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                new_state, _ = self.parse_alarm_status(
+                    self.parse_zones_html(zones_soup).get("alarm_status")
+                )
 
                 if new_state == desired:
                     logger.info("Action '%s' successful on attempt %d", action, attempt)

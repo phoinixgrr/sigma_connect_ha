@@ -80,7 +80,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Optional(
                 CONF_UPDATE_INTERVAL,
                 default=opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
-            ): vol.All(cv.positive_int, vol.Range(min=5)),
+            ): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
             vol.Optional(
                 CONF_RETRY_TOTAL,
                 default=opts.get(CONF_RETRY_TOTAL, DEFAULT_RETRY_TOTAL),
