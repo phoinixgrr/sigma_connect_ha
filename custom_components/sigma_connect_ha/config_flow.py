@@ -26,7 +26,9 @@ from .const import (
     CONF_POST_ACTION_EXTRA_DELAY,
     DEFAULT_POST_ACTION_EXTRA_DELAY,
     CONF_MAX_CONSECUTIVE_FAILURES,
-    DEFAULT_MAX_CONSECUTIVE_FAILURES
+    DEFAULT_MAX_CONSECUTIVE_FAILURES,
+    CONF_ENABLE_ANALYTICS,
+    DEFAULT_ENABLE_ANALYTICS,
 )
 
 
@@ -113,6 +115,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_MAX_CONSECUTIVE_FAILURES,
                 default=opts.get(CONF_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_CONSECUTIVE_FAILURES),
             ): vol.All(cv.positive_int, vol.Range(min=1)),
+            vol.Optional(
+                CONF_ENABLE_ANALYTICS,
+                default=opts.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
+            ): bool,
         })
 
         return self.async_show_form(step_id="init", data_schema=schema)

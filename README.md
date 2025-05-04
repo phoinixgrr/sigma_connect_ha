@@ -179,6 +179,11 @@ This project was developed as a hobby project during **Greek Easter 2025** — w
 
 It’s a little nod to the timing of the project and a reminder that tech and tradition can happily coexist ✨
 
+## Anonymous Analytics
+
+This integration can optionally send a one-time anonymous report with basic system and config info (no personal data) to help improve the integration.
+Disable it anytime from the "Enable analytics reporting" option in settings.
+
 ## ☕ Support My Work
 
 If you find this project helpful and want to support my work, feel free to donate via PayPal:
