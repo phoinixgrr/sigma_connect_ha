@@ -101,6 +101,7 @@ class SigmaClient:
         self._session_authenticated = False
         self._send_analytics = send_analytics
         self._analytics_sent = False
+        self._config: Dict[str, object] = {}
 
     def _create_session(self) -> requests.Session:
         s = requests.Session()
