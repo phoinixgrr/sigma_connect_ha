@@ -200,7 +200,7 @@ class SigmaClient:
                         "zone": cols[0].get_text(strip=True),
                         "description": cols[1].get_text(strip=True),
                         "status": cols[2].get_text(strip=True),
-                        "bypass": cols[3].get_text(strip=True),
+                        "bypass": cols[3].find("td").get_text(strip=True),
                     }
                 )
         return zones
