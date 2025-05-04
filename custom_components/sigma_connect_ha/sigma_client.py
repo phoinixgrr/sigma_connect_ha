@@ -185,43 +185,69 @@ class SigmaClient:
             "ac_power": self._to_bool(ac_match.group(1)) if ac_match else None,
         }
 
-    def get_zones(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
-        zones = []
-        table = soup.find("table", class_=lambda x: x and "normaltable" in x)
-
-        if not table:
-            logger.warning("No zone table found in zones.html")
-            return zones
-
-        for row in table.find_all("tr")[1:]:  # skip header row
-            cols = row.find_all("td")
-            if len(cols) < 4:
-                continue
-
+    def get_all_from_zones(self) -> Tuple[List[Dict[str, str]], Dict[str, Optional[object]]]:
+        for attempt in range(1, RETRY_ATTEMPTS_FOR_HTML + 1):
             try:
-                zone = cols[0].get_text(strip=True)
-                description = cols[1].get_text(strip=True)
-                status = cols[2].get_text(strip=True)
+                if not self.logged_in:
+                    logger.debug("Not logged in. Logging in before fetching zones.html.")
+                    self.login()
 
-                # Bypass is nested inside a second table: extract first <td> inside that
-                bypass_table = cols[3].find("table")
-                if not bypass_table:
-                    bypass = None
-                else:
-                    bypass_cells = bypass_table.find_all("td")
-                    bypass = bypass_cells[0].get_text(strip=True) if bypass_cells else None
+                url = f"{self.base_url}/zones.html"
+                headers = {"Referer": f"{self.base_url}/part.cgi"}
+                resp = self.session.get(url, timeout=5, headers=headers)
 
-                zones.append({
-                    "zone": zone,
-                    "description": description,
-                    "status": status,
-                    "bypass": bypass,
-                })
+                # Set correct encoding
+                resp.encoding = "ISO-8859-7"
+                resp.raise_for_status()
 
-            except Exception as e:
-                logger.warning("Failed to parse zone row: %s", e)
+                # ✅ Check for session expiration (login page returned)
+                if "<title>Sigma Ixion  - Login</title>" in resp.text:
+                    logger.warning("Redirected to login page — session likely expired.")
+                    self.logout()
+                    self.login()
+                    time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
+                    continue
 
-        return zones
+                # Save for inspection
+                with open("/config/zones_debug.html", "w", encoding="utf-8") as f:
+                    f.write(f"<!-- DEBUG: Fetched at {time.ctime()} -->\n")
+                    f.write(resp.text)
+
+                soup = BeautifulSoup(resp.text, "html.parser")
+                zones = self.get_zones(soup)
+
+                full_text = soup.get_text(" ", strip=True)
+                alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*([^\n\r]+)", full_text, re.IGNORECASE)
+                battery_match = re.search(r"Μπαταρία:\s*([\d.,]+)\s*Volt", full_text, re.IGNORECASE)
+                ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", full_text, re.IGNORECASE)
+
+                alarm_status = alarm_match.group(1).strip() if alarm_match else None
+                battery_volt = float(battery_match.group(1).replace(",", ".")) if battery_match else None
+                ac_power = self._to_bool(ac_match.group(1)) if ac_match else None
+
+                logger.debug(
+                    "Parsed alarm_status=%s, battery_volt=%s, ac_power=%s",
+                    alarm_status, battery_volt, ac_power
+                )
+
+                if not alarm_status or battery_volt is None or not zones:
+                    logger.warning("Incomplete data after parsing attempt %d", attempt)
+                    logger.debug("HTML snippet:\n%s", soup.get_text()[:500])
+                    time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
+                    continue
+
+                return zones, {
+                    "alarm_status": alarm_status,
+                    "battery_volt": battery_volt,
+                    "ac_power": ac_power,
+                }
+
+            except Exception as ex:
+                logger.warning("Attempt %d failed to parse zones.html: %s", attempt, ex)
+                time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
+
+        raise RuntimeError("Failed to fetch valid data from zones.html after retries")
+
 
     def get_all_from_zones(self) -> Tuple[List[Dict[str, str]], Dict[str, Optional[object]]]:
         for attempt in range(1, RETRY_ATTEMPTS_FOR_HTML + 1):
