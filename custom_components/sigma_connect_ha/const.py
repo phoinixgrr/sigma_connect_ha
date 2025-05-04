@@ -14,7 +14,7 @@ CONF_POST_ACTION_EXTRA_DELAY = "post_action_extra_delay"
 CONF_MAX_CONSECUTIVE_FAILURES = "max_consecutive_failures"
 
 # Default values for advanced settings
-DEFAULT_UPDATE_INTERVAL = 10            # seconds between polling updates
+DEFAULT_UPDATE_INTERVAL = 10.0          # seconds between polling updates
 DEFAULT_RETRY_TOTAL = 5                 # HTTP retry attempts on network errors
 DEFAULT_RETRY_BACKOFF_FACTOR = 0.5      # Exponential backoff multiplier for HTTP retries
 DEFAULT_RETRY_ATTEMPTS_FOR_HTML = 3     # Retries when parsing HTML fails
