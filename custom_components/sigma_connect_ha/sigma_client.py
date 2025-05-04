@@ -229,13 +229,6 @@ class SigmaClient:
 
                 soup = BeautifulSoup(resp.text, "html.parser")
 
-                # Detect if we got a redirect/invalid page
-                if soup.find("meta", attrs={"http-equiv": "refresh"}):
-                    logger.warning("zones.html is a redirect page, likely due to session expiry")
-                    self.logged_in = False
-                    time.sleep(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)))
-                    continue
-
                 zones = self.get_zones(soup)
 
                 full_text = soup.get_text(" ", strip=True)
