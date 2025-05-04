@@ -314,10 +314,6 @@ class SigmaClient:
     # --------------------------------------------------------------------- #
 
     def perform_action(self, action: str) -> bool:
-        """
-        Arm / Disarm / Stay with full‑flow retry.
-        Returns True once the desired end‑state is confirmed.
-        """
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
         desired_map = {
             "arm": "Armed",
@@ -333,24 +329,41 @@ class SigmaClient:
             try:
                 logger.debug("Attempt %d/%d for %s", attempt, MAX_ACTION_ATTEMPTS, action)
 
-                # 1️⃣  Fresh session / full login
-                self.logout()
-                self.login()
+                # Current state
+                zones_url = self._extract_zones_url(self.select_partition())
+                zones_resp = self.session.get(
+                    f"{self.base_url}/{zones_url}",
+                    headers={"Referer": f"{self.base_url}/part.cgi"},
+                    timeout=5,
+                )
+                zones_resp.raise_for_status()
+                zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                current_status, _ = self.parse_alarm_status(
+                    self.parse_zones_html(zones_soup).get("alarm_status")
+                )
 
-                # 2️⃣  Current state
-                current, _ = self._fetch_partition_status()
                 desired = desired_map[action]
 
-                if current == desired:
+                if current_status == desired:
                     logger.info("Alarm already in desired state (%s)", desired)
                     return True
 
-                # 3️⃣  Trigger action
+                # Trigger action
                 self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
 
-                # 4️⃣  Verify after delay
+                # Wait and re-check
                 time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
-                new_state, _ = self._fetch_partition_status()
+                zones_url = self._extract_zones_url(self.select_partition())
+                zones_resp = self.session.get(
+                    f"{self.base_url}/{zones_url}",
+                    headers={"Referer": f"{self.base_url}/part.cgi"},
+                    timeout=5,
+                )
+                zones_resp.raise_for_status()
+                zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                new_state, _ = self.parse_alarm_status(
+                    self.parse_zones_html(zones_soup).get("alarm_status")
+                )
 
                 if new_state == desired:
                     logger.info("Action '%s' successful on attempt %d", action, attempt)
