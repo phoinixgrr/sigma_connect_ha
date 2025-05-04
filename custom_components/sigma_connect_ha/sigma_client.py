@@ -209,15 +209,20 @@ class SigmaClient:
                     )
         return zones
 
+
     def get_all_from_zones(self) -> Tuple[List[Dict[str, str]], Dict[str, Optional[object]]]:
         for attempt in range(1, RETRY_ATTEMPTS_FOR_HTML + 1):
             try:
                 url = f"{self.base_url}/zones.html"
                 headers = {"Referer": f"{self.base_url}/part.cgi"}
                 resp = self.session.get(url, timeout=5, headers=headers)
+
+                # ✅ Ensure correct character decoding (Greek)
+                resp.encoding = "ISO-8859-7"
+
                 resp.raise_for_status()
 
-                # ✅ Save response to debug file
+                # ✅ Save raw HTML for inspection
                 with open("/config/zones_debug.html", "w", encoding="utf-8") as f:
                     f.write(resp.text)
 
@@ -227,12 +232,12 @@ class SigmaClient:
                 logger.debug("zones.html (attempt %d) raw response snippet:\n%s", attempt, soup.get_text(strip=True)[:200])
 
                 full_text = soup.get_text(" ", strip=True)
-                alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(\S+)", full_text)
-                battery_match = re.search(r"Μπαταρία:\s*([\d.]+)\s*Volt", full_text)
+                alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(\S+)", full_text, re.IGNORECASE)
+                battery_match = re.search(r"Μπαταρία:\s*([\d.,]+)\s*Volt", full_text, re.IGNORECASE)
                 ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", full_text, re.IGNORECASE)
 
                 alarm_status = alarm_match.group(1).strip() if alarm_match else None
-                battery_volt = float(battery_match.group(1)) if battery_match else None
+                battery_volt = float(battery_match.group(1).replace(",", ".")) if battery_match else None
                 ac_power = self._to_bool(ac_match.group(1)) if ac_match else None
 
                 # 💬 DEBUG: Show parsed status
@@ -263,6 +268,10 @@ class SigmaClient:
 
                 if not alarm_status or battery_volt is None or not zones:
                     logger.warning("Incomplete data after parsing attempt %d", attempt)
+                    logger.debug(
+                        "Debug dump: alarm_status=%r, battery_volt=%r, zones=%d",
+                        alarm_status, battery_volt, len(zones)
+                    )
                     raise ValueError("Incomplete data")
 
                 return zones, {
