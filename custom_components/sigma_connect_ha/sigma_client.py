@@ -177,7 +177,7 @@ class SigmaClient:
     def safe_get_status(self):
         data = self.try_zones_directly()
         if data:
-            logger.info("Session reused successfully.") 
+            logger.warning("Session reused successfully.") 
             return data
         self.logout()
         self.login()
