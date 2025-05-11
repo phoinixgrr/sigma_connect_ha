@@ -8,6 +8,7 @@ import platform
 import datetime
 from typing import List, Dict, Tuple, Optional
 import locale
+import asyncio
 
 import requests
 from bs4 import BeautifulSoup
@@ -23,9 +24,9 @@ RETRY_BACKOFF_FACTOR = 0.5
 RETRY_STATUS_FORCELIST = [500, 502, 503, 504]
 RETRY_ATTEMPTS_FOR_HTML = 5
 
-# Super‑retry parameters for arm / disarm / stay
-MAX_ACTION_ATTEMPTS    = 5   # full‑flow retries
-ACTION_BASE_DELAY      = 2   # sec – exponential back‑off multiplier
+# Super-retry parameters for arm / disarm / stay
+MAX_ACTION_ATTEMPTS    = 5   # full-flow retries
+ACTION_BASE_DELAY      = 2   # sec – exponential back-off multiplier
 POST_ACTION_EXTRA_DELAY = 3  # sec – wait before verifying state
 
 ANALYTICS_ENDPOINT = "https://hastats.qivocio.com/internal-api/analytics"
@@ -33,7 +34,7 @@ ANALYTICS_ENDPOINT = "https://hastats.qivocio.com/internal-api/analytics"
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Generic HTML‑parse retry decorator
+# Generic HTML-parse retry decorator
 # ---------------------------------------------------------------------------
 
 def retry_html_request(func):
@@ -95,7 +96,7 @@ def post_installation_analytics(
 # ---------------------------------------------------------------------------
 
 class SigmaClient:
-    def __init__(self, base_url: str, username: str, password: str, send_analytics: bool = True) -> None:
+    def __init__(self, base_url: str, username: str, password: str, coordinator, send_analytics: bool = True) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
@@ -104,6 +105,7 @@ class SigmaClient:
         self._send_analytics = send_analytics
         self._analytics_sent = False
         self._config: Dict[str, object] = {}
+        self.coordinator = coordinator
 
     def _create_session(self) -> requests.Session:
         s = requests.Session()
@@ -142,9 +144,9 @@ class SigmaClient:
             S[i], S[j] = S[j], S[i]
         i = j = 0
         num = random.randint(1, 7)
-        prefix = token[1 : 1 + num]
+        prefix = token[1:1 + num]
         suffix_len = 14 - num - len(secret)
-        suffix = token[num : num + suffix_len]
+        suffix = token[num:num + suffix_len]
         newpass = prefix + secret + suffix + str(num) + str(len(secret))
         out = []
         for ch in newpass:
@@ -193,12 +195,15 @@ class SigmaClient:
         try:
             soup = self.select_partition()
             zones_url = self._extract_zones_url(soup)
-            zones_resp = self.session.get(f"{self.base_url}/{zones_url}", headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5)
+            zones_resp = self.session.get(
+                f"{self.base_url}/{zones_url}",
+                headers={"Referer": f"{self.base_url}/part.cgi"},
+                timeout=5,
+            )
             zones_resp.raise_for_status()
             zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
             result = self.parse_zones_html(zones_soup)
 
-            # Check if required data is present
             if not result.get("alarm_status") or result.get("battery_volt") is None or not result.get("zones"):
                 logger.warning("Session reuse failed: zones.html content incomplete.")
                 return None
@@ -209,7 +214,6 @@ class SigmaClient:
             logger.warning("Session reuse failed: %s", e)
             return None
 
-
     def safe_get_status(self):
         data = self.try_zones_directly()
         if not data:
@@ -218,33 +222,30 @@ class SigmaClient:
             self.login()
             soup = self.select_partition()
             zones_url = self._extract_zones_url(soup)
-            zones_resp = self.session.get(f"{self.base_url}/{zones_url}", headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5)
+            zones_resp = self.session.get(
+                f"{self.base_url}/{zones_url}",
+                headers={"Referer": f"{self.base_url}/part.cgi"},
+                timeout=5,
+            )
             zones_resp.raise_for_status()
             zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
             data = self.parse_zones_html(zones_soup)
 
         logger.info("Session reused or login successful.")
-        
-        if self._send_analytics and not getattr(self, "_analytics_sent", False):
+        if self._send_analytics and not self._analytics_sent:
             self._config["zones"] = len(data.get("zones", []))
             post_installation_analytics(
                 self.base_url,
                 config=self._config,
-                version=self._config.get("version", "unknown")
+                version=self._config.get("version", "unknown"),
             )
             self._analytics_sent = True
 
         return data
 
-
     def _extract_zones_url(self, soup: BeautifulSoup) -> str:
         link = soup.find("a", string=re.compile("ζωνών", re.I))
-        return link["href"] if link and link.get("href") else "zones.html"\
-
-
-    # --------------------------------------------------------------------- #
-    # Partition / status helpers
-    # --------------------------------------------------------------------- #
+        return link["href"] if link and link.get("href") else "zones.html"
 
     @retry_html_request
     def select_partition(self, part_id: str = "1") -> BeautifulSoup:
@@ -258,8 +259,6 @@ class SigmaClient:
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
 
-
-    # One‑stop helper that **fetches + parses** under retry
     @retry_html_request
     def _fetch_partition_status(
         self, part_id: str = "1"
@@ -268,27 +267,15 @@ class SigmaClient:
         raw = self.get_part_status(soup)["alarm_status"]
         return self.parse_alarm_status(raw)
 
-    # --------------------------------------------------------------------- #
-    # Utility conversions
-    # --------------------------------------------------------------------- #
-
     def parse_zones_html(self, soup: BeautifulSoup) -> Dict[str, object]:
-        """Extract alarm status, battery voltage, AC power, and zones from zones.html content."""
         text = soup.get_text("\n", strip=True)
-
-        # 1. Alarm status from: "Τμήμα 1 : ΑΦΟΠΛΙΣΜΕΝΟ"
         alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(.+)", text)
         alarm_status = alarm_match.group(1).strip() if alarm_match else None
-
-        # 2. Battery: "Μπαταρία: 13.5 Volt"
         battery_match = re.search(r"Μπαταρία:\s*([\d.]+)\s*Volt", text)
         battery_volt = float(battery_match.group(1)) if battery_match else None
-
-        # 3. AC Power: "Παροχή 230V: NAI"
         ac_match = re.search(r"Παροχή\s*230V:\s*(ΝΑΙ|NAI|OXI|Yes|No)", text, re.IGNORECASE)
         ac_power = self._to_bool(ac_match.group(1)) if ac_match else None
 
-        # 4. Zones
         table = soup.find("table", class_="normaltable")
         zones = []
         if table:
@@ -308,7 +295,6 @@ class SigmaClient:
             "ac_power": ac_power,
             "zones": zones,
         }
-
 
     def parse_alarm_status(self, raw_status: str) -> Tuple[Optional[str], Optional[bool]]:
         mapping = {
@@ -343,7 +329,7 @@ class SigmaClient:
         return val
 
     # --------------------------------------------------------------------- #
-    # HIGH‑LEVEL ACTION with full‑flow retry
+    # HIGH-LEVEL ACTION with full-flow retry
     # --------------------------------------------------------------------- #
 
     def perform_action(self, action: str) -> bool:
@@ -358,11 +344,18 @@ class SigmaClient:
             logger.error("Invalid action %r", action)
             return False
 
-        for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
-            try:
-                logger.debug("Attempt %d/%d for %s", attempt, MAX_ACTION_ATTEMPTS, action)
+        # Serialize with semaphore
+        logger.debug(f"[LOCK] Waiting to perform '{action}'")
+        asyncio.run_coroutine_threadsafe(
+            self.coordinator.lock.acquire(),
+            self.coordinator.hass.loop
+        ).result()
+        logger.debug(f"[LOCK] Acquired for '{action}'")
 
-                # Current state
+        try:
+            for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
+                logger.debug(f"[ACTION START] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} for '{action}'")
+
                 zones_url = self._extract_zones_url(self.select_partition())
                 zones_resp = self.session.get(
                     f"{self.base_url}/{zones_url}",
@@ -374,18 +367,30 @@ class SigmaClient:
                 current_status, _ = self.parse_alarm_status(
                     self.parse_zones_html(zones_soup).get("alarm_status")
                 )
+                logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
 
                 desired = desired_map[action]
-
                 if current_status == desired:
-                    logger.info("Alarm already in desired state (%s)", desired)
+                    logger.info(f"[ACTION] Alarm already in desired state ({desired})")
                     return True
 
-                # Trigger action
+                logger.debug(f"[ACTION] Triggering '{action}' on panel.")
                 self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
 
-                # Wait and re-check
-                time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
+                time.sleep(POST_ACTION_EXTRA_DELAY + attempt + random.uniform(0.5, 1.5))
+
+                # Double-refresh to sync
+                asyncio.run_coroutine_threadsafe(
+                    self.coordinator.async_request_refresh(),
+                    self.coordinator.hass.loop
+                ).result()
+                time.sleep(1)
+                asyncio.run_coroutine_threadsafe(
+                    self.coordinator.async_request_refresh(),
+                    self.coordinator.hass.loop
+                ).result()
+
+                # Verify state
                 zones_url = self._extract_zones_url(self.select_partition())
                 zones_resp = self.session.get(
                     f"{self.base_url}/{zones_url}",
@@ -397,29 +402,19 @@ class SigmaClient:
                 new_state, _ = self.parse_alarm_status(
                     self.parse_zones_html(zones_soup).get("alarm_status")
                 )
+                logger.debug(f"[ACTION] Status after '{action}': {new_state}")
 
                 if new_state == desired:
-                    logger.info("Action '%s' successful on attempt %d", action, attempt)
+                    logger.info(f"[ACTION SUCCESS] '{action}' succeeded on attempt {attempt}")
                     return True
 
                 logger.warning(
-                    "Mismatch after '%s' (attempt %d): expected %s, got %s",
-                    action,
-                    attempt,
-                    desired,
-                    new_state,
+                    f"[ACTION MISMATCH] Attempt {attempt}: expected {desired}, got {new_state}"
                 )
 
-            except Exception as exc:
-                logger.warning(
-                    "Attempt %d/%d failed for '%s': %s",
-                    attempt,
-                    MAX_ACTION_ATTEMPTS,
-                    action,
-                    exc,
-                )
+            logger.error(f"[ACTION FAILED] Failed to perform '{action}' after {MAX_ACTION_ATTEMPTS} attempts")
+            return False
 
-            time.sleep(ACTION_BASE_DELAY * attempt)
-
-        logger.error("Failed to perform action '%s' after %d attempts", action, MAX_ACTION_ATTEMPTS)
-        return False
+        finally:
+            self.coordinator.lock.release()
+            logger.debug(f"[LOCK] Released for '{action}'")
