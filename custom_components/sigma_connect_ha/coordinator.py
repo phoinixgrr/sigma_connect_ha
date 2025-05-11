@@ -2,7 +2,7 @@ from datetime import timedelta
 import logging
 import re
 import time
-from asyncio import Lock
+import asyncio
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -50,7 +50,6 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self.hass = hass
         self.entry = entry
         self._last_data = None
-        self._lock = Lock()
         self._consecutive_failures = 0
 
         opts = entry.options
@@ -75,25 +74,17 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self.max_total_attempts = opts.get(
             CONF_MAX_TOTAL_ATTEMPTS, DEFAULT_MAX_TOTAL_ATTEMPTS
         )
-
-        interval = opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
-        update_interval = timedelta(seconds=interval)
-
-        # how many failures before going unavailable
         self.max_consecutive_failures = opts.get(
             CONF_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_CONSECUTIVE_FAILURES
         )
 
-        base = sanitize_host(entry.data[CONF_HOST])
-        self.client = sigma_client.SigmaClient(
-            f"http://{base}:5053",
-            entry.data[CONF_USERNAME],
-            entry.data[CONF_PASSWORD],
-            send_analytics=entry.options.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
-        )
+        interval = opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        update_interval = timedelta(seconds=interval)
 
-        self.client._config.update(entry.options)
-        
+        # Locks: one for polling, one to serialize actions
+        self._poll_lock = asyncio.Lock()
+        self.lock = asyncio.Lock()
+
         super().__init__(
             hass,
             _LOGGER,
@@ -101,20 +92,27 @@ class SigmaCoordinator(DataUpdateCoordinator):
             update_interval=update_interval,
         )
 
+        base = sanitize_host(entry.data[CONF_HOST])
+        self.client = sigma_client.SigmaClient(
+            f"http://{base}:5053",
+            entry.data[CONF_USERNAME],
+            entry.data[CONF_PASSWORD],
+            coordinator=self,
+            send_analytics=opts.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
+        )
+        self.client._config.update(entry.options)
+
     async def _async_update_data(self):
-        async with self._lock:
+        async with self._poll_lock:
             try:
                 data = await self.hass.async_add_executor_job(
                     self._retry_with_backoff
                 )
                 self._last_data = data
-                # reset failure counter
                 self._consecutive_failures = 0
                 return data
             except Exception as err:
                 self._consecutive_failures += 1
-
-                # if we have old data and haven't hit threshold yet, return old data
                 if (
                     self._last_data is not None
                     and self._consecutive_failures < self.max_consecutive_failures
@@ -126,8 +124,6 @@ class SigmaCoordinator(DataUpdateCoordinator):
                         err,
                     )
                     return self._last_data
-
-                # otherwise mark unavailable
                 _LOGGER.error(
                     "Sigma fetch failed (%d/%d), marking unavailable: %s",
                     self._consecutive_failures,
@@ -151,7 +147,6 @@ class SigmaCoordinator(DataUpdateCoordinator):
 
     def _fetch(self):
         data = self.client.safe_get_status()
-
         parsed, bypass = self.client.parse_alarm_status(data.get("alarm_status"))
         if not parsed or data.get("battery_volt") is None or not data.get("zones"):
             raise ValueError("Incomplete data")

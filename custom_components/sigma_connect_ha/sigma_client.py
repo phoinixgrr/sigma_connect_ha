@@ -8,6 +8,7 @@ import platform
 import datetime
 from typing import List, Dict, Tuple, Optional
 import locale
+import asyncio
 
 import requests
 from bs4 import BeautifulSoup
@@ -95,7 +96,7 @@ def post_installation_analytics(
 # ---------------------------------------------------------------------------
 
 class SigmaClient:
-    def __init__(self, base_url: str, username: str, password: str, send_analytics: bool = True) -> None:
+    def __init__(self, base_url: str, username: str, password: str, coordinator, send_analytics: bool = True) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
@@ -104,6 +105,7 @@ class SigmaClient:
         self._send_analytics = send_analytics
         self._analytics_sent = False
         self._config: Dict[str, object] = {}
+        self.coordinator = coordinator
 
     def _create_session(self) -> requests.Session:
         s = requests.Session()
@@ -358,8 +360,21 @@ class SigmaClient:
             logger.error("Invalid action %r", action)
             return False
 
-        for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
-            try:
+        # Acquire semaphore to ensure exclusive access
+        logger.debug(f"[LOCK] Waiting to perform '{action}'")
+        # blocks here until coordinator.lock (an asyncio.Lock) is free
+        asyncio.run_coroutine_threadsafe(
+            self.coordinator.lock.acquire(),
+            self.coordinator.hass.loop
+        ).result()
+        logger.debug(f"[LOCK] Acquired for '{action}'")
+
+        # Pause coordinator polling
+        self.coordinator.update_interval = None
+        logger.debug("[ACTION] Paused polling during action execution.")
+
+        try:
+            for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
                 logger.debug(f"[ACTION START] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} for '{action}'")
 
                 # Current state
@@ -378,7 +393,6 @@ class SigmaClient:
                 logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
 
                 desired = desired_map[action]
-
                 if current_status == desired:
                     logger.info(f"[ACTION] Alarm already in desired state ({desired})")
                     return True
@@ -387,10 +401,22 @@ class SigmaClient:
                 logger.debug(f"[ACTION] Triggering '{action}' on panel.")
                 self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
 
-                # Wait and re-check
-                logger.debug(f"[ACTION] Sleeping for verification: {POST_ACTION_EXTRA_DELAY + attempt}s")
-                time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
+                # Wait + small jitter before verifying
+                jitter = random.uniform(0.5, 1.5)
+                time.sleep(POST_ACTION_EXTRA_DELAY + attempt + jitter)
 
+                # Double refresh to sync state
+                asyncio.run_coroutine_threadsafe(
+                    self.coordinator.async_request_refresh(),
+                    self.coordinator.hass.loop
+                ).result()
+                time.sleep(1)
+                asyncio.run_coroutine_threadsafe(
+                    self.coordinator.async_request_refresh(),
+                    self.coordinator.hass.loop
+                ).result()
+
+                # Re-fetch status
                 zones_url = self._extract_zones_url(self.select_partition())
                 zones_resp = self.session.get(
                     f"{self.base_url}/{zones_url}",
@@ -402,7 +428,6 @@ class SigmaClient:
                 new_state, _ = self.parse_alarm_status(
                     self.parse_zones_html(zones_soup).get("alarm_status")
                 )
-
                 logger.debug(f"[ACTION] Status after '{action}': {new_state}")
 
                 if new_state == desired:
@@ -410,17 +435,14 @@ class SigmaClient:
                     return True
 
                 logger.warning(
-                    f"[ACTION MISMATCH] Mismatch after '{action}' (attempt {attempt}): "
-                    f"expected {desired}, got {new_state}"
+                    f"[ACTION MISMATCH] Mismatch after '{action}' (attempt {attempt}): expected {desired}, got {new_state}"
                 )
 
-            except Exception as exc:
-                logger.warning(
-                    f"[ACTION ERROR] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} failed for '{action}': {exc}"
-                )
+            logger.error(f"[ACTION FAILED] Failed to perform '{action}' after {MAX_ACTION_ATTEMPTS} attempts")
+            return False
 
-            logger.debug(f"[ACTION] Waiting before retry: {ACTION_BASE_DELAY * attempt}s")
-            time.sleep(ACTION_BASE_DELAY * attempt)
-
-        logger.error(f"[ACTION FAILED] Failed to perform '{action}' after {MAX_ACTION_ATTEMPTS} attempts")
-        return False
+        finally:
+            # Resume polling and release semaphore
+            self.coordinator.update_interval = timedelta(seconds=10)
+            self.coordinator.lock.release()
+            logger.debug(f"[LOCK] Released for '{action}', polling resumed.")
