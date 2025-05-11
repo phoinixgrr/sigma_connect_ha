@@ -269,11 +269,24 @@ class SigmaClient:
             zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
             data = self.parse_zones_html(zones_soup)
 
-        # Only now do we have a real zone count
+        # Only fire analytics once we actually have a non-zero zone count (or give up after 3 tries)
         if self._send_analytics and not self._analytics_sent:
-            # stash the real # of zones into the config dict
+            attempts = 0
+            while attempts < 3 and len(data.get("zones", [])) == 0:
+                logger.warning(
+                    "Zones still empty—retrying analytics in 1s (%d/3)", attempts + 1
+                )
+                time.sleep(1)
+                retry = self.try_zones_directly()
+                if retry:
+                    data = retry
+                attempts += 1
+
+            if len(data.get("zones", [])) == 0:
+                logger.warning("Giving up after 3 retries; sending analytics with zones=0")
+
+            # stash and send
             self._config["zones"] = len(data.get("zones", []))
-            # fire analytics
             post_installation_analytics(
                 self.base_url,
                 config=self._config,
