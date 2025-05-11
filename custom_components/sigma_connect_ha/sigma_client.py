@@ -360,10 +360,11 @@ class SigmaClient:
 
         for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
             try:
-                logger.debug("Attempt %d/%d for %s", attempt, MAX_ACTION_ATTEMPTS, action)
+                logger.debug(f"[ACTION START] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} for '{action}'")
 
                 # Current state
                 zones_url = self._extract_zones_url(self.select_partition())
+                logger.debug(f"[ACTION] Extracted zones URL: {zones_url}")
                 zones_resp = self.session.get(
                     f"{self.base_url}/{zones_url}",
                     headers={"Referer": f"{self.base_url}/part.cgi"},
@@ -374,18 +375,22 @@ class SigmaClient:
                 current_status, _ = self.parse_alarm_status(
                     self.parse_zones_html(zones_soup).get("alarm_status")
                 )
+                logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
 
                 desired = desired_map[action]
 
                 if current_status == desired:
-                    logger.info("Alarm already in desired state (%s)", desired)
+                    logger.info(f"[ACTION] Alarm already in desired state ({desired})")
                     return True
 
                 # Trigger action
+                logger.debug(f"[ACTION] Triggering '{action}' on panel.")
                 self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
 
                 # Wait and re-check
+                logger.debug(f"[ACTION] Sleeping for verification: {POST_ACTION_EXTRA_DELAY + attempt}s")
                 time.sleep(POST_ACTION_EXTRA_DELAY + attempt)
+
                 zones_url = self._extract_zones_url(self.select_partition())
                 zones_resp = self.session.get(
                     f"{self.base_url}/{zones_url}",
@@ -398,28 +403,24 @@ class SigmaClient:
                     self.parse_zones_html(zones_soup).get("alarm_status")
                 )
 
+                logger.debug(f"[ACTION] Status after '{action}': {new_state}")
+
                 if new_state == desired:
-                    logger.info("Action '%s' successful on attempt %d", action, attempt)
+                    logger.info(f"[ACTION SUCCESS] '{action}' succeeded on attempt {attempt}")
                     return True
 
                 logger.warning(
-                    "Mismatch after '%s' (attempt %d): expected %s, got %s",
-                    action,
-                    attempt,
-                    desired,
-                    new_state,
+                    f"[ACTION MISMATCH] Mismatch after '{action}' (attempt {attempt}): "
+                    f"expected {desired}, got {new_state}"
                 )
 
             except Exception as exc:
                 logger.warning(
-                    "Attempt %d/%d failed for '%s': %s",
-                    attempt,
-                    MAX_ACTION_ATTEMPTS,
-                    action,
-                    exc,
+                    f"[ACTION ERROR] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} failed for '{action}': {exc}"
                 )
 
+            logger.debug(f"[ACTION] Waiting before retry: {ACTION_BASE_DELAY * attempt}s")
             time.sleep(ACTION_BASE_DELAY * attempt)
 
-        logger.error("Failed to perform action '%s' after %d attempts", action, MAX_ACTION_ATTEMPTS)
+        logger.error(f"[ACTION FAILED] Failed to perform '{action}' after {MAX_ACTION_ATTEMPTS} attempts")
         return False
