@@ -269,9 +269,11 @@ class SigmaClient:
             zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
             data = self.parse_zones_html(zones_soup)
 
-        logger.info("Session reused or login successful.")
+        # Only now do we have a real zone count
         if self._send_analytics and not self._analytics_sent:
+            # stash the real # of zones into the config dict
             self._config["zones"] = len(data.get("zones", []))
+            # fire analytics
             post_installation_analytics(
                 self.base_url,
                 config=self._config,
@@ -280,7 +282,7 @@ class SigmaClient:
             self._analytics_sent = True
 
         return data
-
+        
     def _extract_zones_url(self, soup: BeautifulSoup) -> str:
         link = soup.find("a", string=re.compile("ζωνών", re.I))
         return link["href"] if link and link.get("href") else "zones.html"
