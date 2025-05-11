@@ -15,6 +15,28 @@ from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .const import (
+    CONF_UPDATE_INTERVAL,
+    DEFAULT_UPDATE_INTERVAL,
+    CONF_RETRY_TOTAL,
+    DEFAULT_RETRY_TOTAL,
+    CONF_RETRY_BACKOFF_FACTOR,
+    DEFAULT_RETRY_BACKOFF_FACTOR,
+    CONF_RETRY_ATTEMPTS_FOR_HTML,
+    DEFAULT_RETRY_ATTEMPTS_FOR_HTML,
+    CONF_MAX_TOTAL_ATTEMPTS,
+    DEFAULT_MAX_TOTAL_ATTEMPTS,
+    CONF_MAX_ACTION_ATTEMPTS,
+    DEFAULT_MAX_ACTION_ATTEMPTS,
+    CONF_ACTION_BASE_DELAY,
+    DEFAULT_ACTION_BASE_DELAY,
+    CONF_POST_ACTION_EXTRA_DELAY,
+    DEFAULT_POST_ACTION_EXTRA_DELAY,
+    CONF_MAX_CONSECUTIVE_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_FAILURES,
+    CONF_ENABLE_ANALYTICS,
+    DEFAULT_ENABLE_ANALYTICS,
+)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -68,7 +90,22 @@ def post_installation_analytics(
         except ImportError:
             ha_version = None
 
-        config = config or {}
+        # start with every default
+        full_config: Dict[str, object] = {
+            CONF_UPDATE_INTERVAL:       DEFAULT_UPDATE_INTERVAL,
+            CONF_RETRY_TOTAL:           DEFAULT_RETRY_TOTAL,
+            CONF_RETRY_BACKOFF_FACTOR:  DEFAULT_RETRY_BACKOFF_FACTOR,
+            CONF_RETRY_ATTEMPTS_FOR_HTML: DEFAULT_RETRY_ATTEMPTS_FOR_HTML,
+            CONF_MAX_TOTAL_ATTEMPTS:    DEFAULT_MAX_TOTAL_ATTEMPTS,
+            CONF_MAX_ACTION_ATTEMPTS:   DEFAULT_MAX_ACTION_ATTEMPTS,
+            CONF_ACTION_BASE_DELAY:     DEFAULT_ACTION_BASE_DELAY,
+            CONF_POST_ACTION_EXTRA_DELAY: DEFAULT_POST_ACTION_EXTRA_DELAY,
+            CONF_MAX_CONSECUTIVE_FAILURES: DEFAULT_MAX_CONSECUTIVE_FAILURES,
+            CONF_ENABLE_ANALYTICS:      DEFAULT_ENABLE_ANALYTICS,
+        }
+        # overlay with whatever actually got saved
+        if config:
+            full_config.update(config)
 
         payload = {
             "id": unique_hash,
@@ -82,14 +119,15 @@ def post_installation_analytics(
             "time": datetime.datetime.utcnow().isoformat() + "Z",
             "locale": locale.getdefaultlocale()[0] if locale.getdefaultlocale() else None,
             "tz": time.tzname[0] if time.tzname else None,
-            "zones": config.get("zones"),
-            "config": {k: v for k, v in config.items() if k != "zones"},
+            "zones": config.get("zones") if config else None,
+            "config": full_config,
         }
 
         requests.post(ANALYTICS_ENDPOINT, json=payload, timeout=3)
         logger.info("Sigma analytics posted successfully.")
     except Exception as e:
         logger.debug("Failed to post analytics: %s", e)
+
 
 # ---------------------------------------------------------------------------
 # Sigma alarm client
