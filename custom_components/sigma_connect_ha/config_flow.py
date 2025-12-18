@@ -29,6 +29,7 @@ from .const import (
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
     CONF_ENABLE_ANALYTICS,
     DEFAULT_ENABLE_ANALYTICS,
+    CONF_PIN,
 )
 
 
@@ -39,12 +40,15 @@ class SigmaAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         if user_input:
+            pin = (user_input.get(CONF_PIN) or "").strip()
+            user_input[CONF_PIN] = pin
             return self.async_create_entry(
                 title="Sigma Alarm",
                 data={
                     CONF_HOST: user_input[CONF_HOST],
                     CONF_USERNAME: user_input[CONF_USERNAME],
                     CONF_PASSWORD: user_input[CONF_PASSWORD],
+                    CONF_PIN: pin,  # save it
                 },
             )
 
@@ -52,6 +56,7 @@ class SigmaAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_HOST): str,
             vol.Required(CONF_USERNAME): str,
             vol.Required(CONF_PASSWORD): str,
+            vol.Optional(CONF_PIN, default=""): str,  # no self.config_entry here
         })
         return self.async_show_form(step_id="user", data_schema=data_schema)
 
@@ -75,10 +80,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "Please restart Home Assistant for the Sigma Alarm changes to take effect.",
                 title="Sigma Alarm Integration",
             )
+            pin = (user_input.get(CONF_PIN) or "").strip()
+            user_input[CONF_PIN] = pin
+            user_input[CONF_PIN] = pin
             return self.async_create_entry(title="", data=user_input)
 
         opts = self.config_entry.options
         schema = vol.Schema({
+            vol.Optional(CONF_PIN, default=opts.get(CONF_PIN, "")): str,
             vol.Optional(
                 CONF_UPDATE_INTERVAL,
                 default=opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),

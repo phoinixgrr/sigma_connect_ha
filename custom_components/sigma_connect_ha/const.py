@@ -3,6 +3,7 @@
 DOMAIN = "sigma_connect_ha"
 
 # Config keys for advanced settings
+CONF_PIN = "pin"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_RETRY_TOTAL = "retry_total"
 CONF_RETRY_BACKOFF_FACTOR = "retry_backoff_factor"

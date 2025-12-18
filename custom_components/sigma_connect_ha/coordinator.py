@@ -10,6 +10,7 @@ from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 
 from .const import (
     DOMAIN,
+    CONF_PIN,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
     CONF_RETRY_TOTAL,
@@ -51,6 +52,12 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self._last_data = None
         self._consecutive_failures = 0
+
+        pin = (
+            entry.options.get(CONF_PIN)
+            or entry.data.get(CONF_PIN)
+            or entry.data[CONF_PASSWORD]
+        )
 
         opts = entry.options
         # Override module constants
@@ -97,6 +104,7 @@ class SigmaCoordinator(DataUpdateCoordinator):
             f"http://{base}:5053",
             entry.data[CONF_USERNAME],
             entry.data[CONF_PASSWORD],
+            pin,
             coordinator=self,
             send_analytics=opts.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
         )

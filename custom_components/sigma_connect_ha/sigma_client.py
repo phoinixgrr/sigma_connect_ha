@@ -134,10 +134,11 @@ def post_installation_analytics(
 # ---------------------------------------------------------------------------
 
 class SigmaClient:
-    def __init__(self, base_url: str, username: str, password: str, coordinator, send_analytics: bool = True) -> None:
+    def __init__(self, base_url: str, username: str, password: str, pin: str | None, coordinator, send_analytics: bool = True) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
+        self.pin = (pin or password).strip()
         self.session: requests.Session = self._create_session()
         self._session_authenticated = False
         self._send_analytics = send_analytics
@@ -213,7 +214,7 @@ class SigmaClient:
     def _submit_pin(self) -> None:
         soup = self._get_soup("user.html")
         token = soup.find("input", {"name": "gen_input"})["value"]
-        encrypted, gen_val = self._encrypt(self.password, token)
+        encrypted, gen_val = self._encrypt(self.pin, token)
         data = {
             "password": encrypted,
             "gen_input": gen_val,
