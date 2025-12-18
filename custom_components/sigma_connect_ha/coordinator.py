@@ -103,36 +103,36 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self.client._config.update(entry.options)
 
     async def _async_update_data(self):
+        # Polling must not run while an arm/disarm action is in progress.
         async with self._poll_lock:
-            try:
-                data = await self.hass.async_add_executor_job(
-                    self._retry_with_backoff
-                )
-                self._last_data = data
-                self._consecutive_failures = 0
-                return data
-            except Exception as err:
-                self._consecutive_failures += 1
-                if (
-                    self._last_data is not None
-                    and self._consecutive_failures < self.max_consecutive_failures
-                ):
-                    _LOGGER.warning(
-                        "Sigma fetch failed (%d/%d), returning last known data: %s",
+            async with self.lock:
+                try:
+                    data = await self.hass.async_add_executor_job(self._retry_with_backoff)
+                    self._last_data = data
+                    self._consecutive_failures = 0
+                    return data
+                except Exception as err:
+                    self._consecutive_failures += 1
+                    if (
+                        self._last_data is not None
+                        and self._consecutive_failures < self.max_consecutive_failures
+                    ):
+                        _LOGGER.warning(
+                            "Sigma fetch failed (%d/%d), returning last known data: %s",
+                            self._consecutive_failures,
+                            self.max_consecutive_failures,
+                            err,
+                        )
+                        return self._last_data
+                    _LOGGER.error(
+                        "Sigma fetch failed (%d/%d), marking unavailable: %s",
                         self._consecutive_failures,
                         self.max_consecutive_failures,
                         err,
                     )
-                    return self._last_data
-                _LOGGER.error(
-                    "Sigma fetch failed (%d/%d), marking unavailable: %s",
-                    self._consecutive_failures,
-                    self.max_consecutive_failures,
-                    err,
-                )
-                raise UpdateFailed(
-                    f"Sigma fetch failed ({self._consecutive_failures}/{self.max_consecutive_failures}): {err}"
-                )
+                    raise UpdateFailed(
+                        f"Sigma fetch failed ({self._consecutive_failures}/{self.max_consecutive_failures}): {err}"
+                    )
 
     def _retry_with_backoff(self):
         for i in range(1, self.max_total_attempts + 1):

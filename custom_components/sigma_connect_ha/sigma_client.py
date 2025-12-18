@@ -387,17 +387,12 @@ class SigmaClient:
 
     def perform_action(self, action: str) -> bool:
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
-        desired_map = {
-            "arm": "Armed",
-            "disarm": "Disarmed",
-            "stay": "Armed Perimeter",
-        }
+        desired_map = {"arm": "Armed", "disarm": "Disarmed", "stay": "Armed Perimeter"}
 
         if action not in action_map:
             logger.error("Invalid action %r", action)
             return False
 
-        # Serialize with semaphore
         logger.debug(f"[LOCK] Waiting to perform '{action}'")
         asyncio.run_coroutine_threadsafe(
             self.coordinator.lock.acquire(),
@@ -406,68 +401,62 @@ class SigmaClient:
         logger.debug(f"[LOCK] Acquired for '{action}'")
 
         try:
-            for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
-                logger.debug(f"[ACTION START] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} for '{action}'")
+            desired = desired_map[action]
 
-                zones_url = self._extract_zones_url(self.select_partition())
-                zones_resp = self.session.get(
-                    f"{self.base_url}/{zones_url}",
-                    headers={"Referer": f"{self.base_url}/part.cgi"},
-                    timeout=5,
-                )
-                zones_resp.raise_for_status()
-                zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
-                current_status, _ = self.parse_alarm_status(
-                    self.parse_zones_html(zones_soup).get("alarm_status")
-                )
-                logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
+            # 1) If already desired, exit fast
+            zones_url = self._extract_zones_url(self.select_partition())
+            zones_resp = self.session.get(
+                f"{self.base_url}/{zones_url}",
+                headers={"Referer": f"{self.base_url}/part.cgi"},
+                timeout=5,
+            )
+            zones_resp.raise_for_status()
+            zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+            current_status, _ = self.parse_alarm_status(
+                self.parse_zones_html(zones_soup).get("alarm_status")
+            )
+            logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
+            if current_status == desired:
+                logger.info(f"[ACTION] Alarm already in desired state ({desired})")
+                return True
 
-                desired = desired_map[action]
-                if current_status == desired:
-                    logger.info(f"[ACTION] Alarm already in desired state ({desired})")
-                    return True
+            # 2) Trigger ONCE
+            logger.debug(f"[ACTION] Triggering '{action}' on panel.")
+            self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
 
-                logger.debug(f"[ACTION] Triggering '{action}' on panel.")
-                self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
+            # 3) Wait/poll until the panel reports the new state (fast polling allowed)
+            deadline = time.time() + 60  # seconds (tune if you want)
+            while time.time() < deadline:
+                try:
+                    zones_url = self._extract_zones_url(self.select_partition())
+                    zones_resp = self.session.get(
+                        f"{self.base_url}/{zones_url}",
+                        headers={"Referer": f"{self.base_url}/part.cgi"},
+                        timeout=5,
+                    )
+                    zones_resp.raise_for_status()
+                    zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                    new_state, _ = self.parse_alarm_status(
+                        self.parse_zones_html(zones_soup).get("alarm_status")
+                    )
+                    logger.debug(f"[ACTION] Status after '{action}': {new_state}")
 
-                time.sleep(POST_ACTION_EXTRA_DELAY + attempt + random.uniform(0.5, 1.5))
+                    if new_state == desired:
+                        logger.info(f"[ACTION SUCCESS] '{action}' reached {desired}")
+                        # Optional: request one refresh, but don't block on multiple refreshes
+                        asyncio.run_coroutine_threadsafe(
+                            self.coordinator.async_request_refresh(),
+                            self.coordinator.hass.loop
+                        ).result()
+                        return True
+                except Exception as e:
+                    logger.debug("[ACTION] Verify loop error (will retry): %s", e)
 
-                # Double-refresh to sync
-                asyncio.run_coroutine_threadsafe(
-                    self.coordinator.async_request_refresh(),
-                    self.coordinator.hass.loop
-                ).result()
-                time.sleep(1)
-                asyncio.run_coroutine_threadsafe(
-                    self.coordinator.async_request_refresh(),
-                    self.coordinator.hass.loop
-                ).result()
+                time.sleep(0.5)
 
-                # Verify state
-                zones_url = self._extract_zones_url(self.select_partition())
-                zones_resp = self.session.get(
-                    f"{self.base_url}/{zones_url}",
-                    headers={"Referer": f"{self.base_url}/part.cgi"},
-                    timeout=5,
-                )
-                zones_resp.raise_for_status()
-                zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
-                new_state, _ = self.parse_alarm_status(
-                    self.parse_zones_html(zones_soup).get("alarm_status")
-                )
-                logger.debug(f"[ACTION] Status after '{action}': {new_state}")
-
-                if new_state == desired:
-                    logger.info(f"[ACTION SUCCESS] '{action}' succeeded on attempt {attempt}")
-                    return True
-
-                logger.warning(
-                    f"[ACTION MISMATCH] Attempt {attempt}: expected {desired}, got {new_state}"
-                )
-
-            logger.error(f"[ACTION FAILED] Failed to perform '{action}' after {MAX_ACTION_ATTEMPTS} attempts")
+            logger.error(f"[ACTION FAILED] Timeout waiting for '{action}' to become {desired}")
             return False
 
         finally:
-            self.coordinator.lock.release()
+            self.coordinator.hass.loop.call_soon_threadsafe(self.coordinator.lock.release)
             logger.debug(f"[LOCK] Released for '{action}'")

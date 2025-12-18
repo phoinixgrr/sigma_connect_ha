@@ -76,16 +76,16 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         await self.hass.async_add_executor_job(
             self.coordinator.client.perform_action, "disarm"
         )
-        await self._double_refresh()
+        await self.coordinator.async_request_refresh()
 
     async def async_alarm_arm_away(self, code=None):
         await self.hass.async_add_executor_job(
             self.coordinator.client.perform_action, "arm"
         )
-        await self._double_refresh()
+        await self.coordinator.async_request_refresh()
 
     async def async_alarm_arm_home(self, code=None):
         await self.hass.async_add_executor_job(
             self.coordinator.client.perform_action, "stay"
         )
-        await self._double_refresh()
+        await self.coordinator.async_request_refresh()
