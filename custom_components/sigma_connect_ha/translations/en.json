@@ -8,7 +8,7 @@
         "data": {
           "host": "IP Address",
           "username": "Username",
-          "password": "Web Interface Password ",
+          "password": "Web Interface Password",
           "pin": "Alarm PIN"
         }
       }
