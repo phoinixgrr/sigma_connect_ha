@@ -3,10 +3,9 @@ name: Release on Tag Push
 on:
   push:
     tags:
-      - 'v*.*.*'        # full semver
-      - 'v*.*.*-dev*'   # dev/prerelease builds
+      - "v*.*.*"        # full semver
+      - "v*.*.*-dev*"   # dev/prerelease builds
 
-# grant write access so we can create releases
 permissions:
   contents: write
 
@@ -18,24 +17,52 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Extract Tag Name
-        id: get_tag
         run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
-      - name: Create GitHub Release
+      # Set custom_components/sigma_connect_ha/manifest.json "version" to tag (without leading "v")
+      - name: Set manifest version from tag
+        run: |
+          VER="${TAG_NAME#v}"
+          python - <<'PY'
+          import json, os
+          path = "custom_components/sigma_connect_ha/manifest.json"
+          ver  = os.environ["VER"]
+          with open(path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+          data["version"] = ver
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+              f.write("\n")
+          print("Updated manifest.json version to", ver)
+          PY
+        env:
+          VER: ${{ env.TAG_NAME }}
+
+      # Package a HACS-friendly zip (custom_components/sigma_connect_ha)
+      - name: Create release zip
+        run: |
+          mkdir -p dist
+          ZIP="dist/sigma_connect_ha-${TAG_NAME}.zip"
+          cd custom_components
+          zip -r "../${ZIP}" sigma_connect_ha
+          echo "ASSET_PATH=${ZIP}" >> $GITHUB_ENV
+
+      - name: Create GitHub Release (upload zip)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          # if it's a dev tag, mark as prerelease
           if [[ "${TAG_NAME}" == *-dev* ]]; then
             gh release create "${TAG_NAME}" \
               --generate-notes \
               --title "Release ${TAG_NAME}" \
               --prerelease \
-              --repo "${GITHUB_REPOSITORY}"
+              --repo "${GITHUB_REPOSITORY}" \
+              "${ASSET_PATH}"
           else
             gh release create "${TAG_NAME}" \
               --generate-notes \
               --title "Release ${TAG_NAME}" \
-              --repo "${GITHUB_REPOSITORY}"
+              --repo "${GITHUB_REPOSITORY}" \
+              "${ASSET_PATH}"
           fi
