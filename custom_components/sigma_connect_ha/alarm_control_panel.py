@@ -64,9 +64,9 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     async def _double_refresh(self):
         """Wait briefly, then refresh twice for reliability."""
         await asyncio.sleep(1)  # allow panel time to update
-        await self.coordinator.async_request_refresh()
+        self.hass.async_create_task(self.coordinator.async_request_refresh())
         await asyncio.sleep(1)
-        await self.coordinator.async_request_refresh()
+        self.hass.async_create_task(self.coordinator.async_request_refresh())
 
     # ---------------------------------------------------------------------
     # AlarmControlPanelEntity callbacks
@@ -76,16 +76,16 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         await self.hass.async_add_executor_job(
             self.coordinator.client.perform_action, "disarm"
         )
-        await self.coordinator.async_request_refresh()
+        self.hass.async_create_task(self.coordinator.async_request_refresh())
 
     async def async_alarm_arm_away(self, code=None):
         await self.hass.async_add_executor_job(
             self.coordinator.client.perform_action, "arm"
         )
-        await self.coordinator.async_request_refresh()
+        self.hass.async_create_task(self.coordinator.async_request_refresh())
 
     async def async_alarm_arm_home(self, code=None):
         await self.hass.async_add_executor_job(
             self.coordinator.client.perform_action, "stay"
         )
-        await self.coordinator.async_request_refresh()
+        self.hass.async_create_task(self.coordinator.async_request_refresh())

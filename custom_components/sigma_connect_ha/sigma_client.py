@@ -444,11 +444,33 @@ class SigmaClient:
 
                     if new_state == desired:
                         logger.info(f"[ACTION SUCCESS] '{action}' reached {desired}")
-                        # Optional: request one refresh, but don't block on multiple refreshes
-                        asyncio.run_coroutine_threadsafe(
-                            self.coordinator.async_request_refresh(),
-                            self.coordinator.hass.loop
-                        ).result()
+
+                        # We already have zones_soup that proved the state.
+                        # Publish coordinator-shaped data immediately (no refresh, no deadlock).
+                        raw = self.parse_zones_html(zones_soup)
+                        parsed, bypass = self.parse_alarm_status(raw.get("alarm_status"))
+
+                        panel_data = {
+                            "status": parsed,
+                            "zones_bypassed": bypass,
+                            "battery_volt": raw.get("battery_volt"),
+                            "ac_power": raw.get("ac_power"),
+                            "zones": [
+                                {
+                                    **z,
+                                    "status": self._to_openclosed(z.get("status")),
+                                    "bypass": self._to_bool(z.get("bypass")),
+                                }
+                                for z in raw.get("zones", [])
+                            ],
+                        }
+
+                        # Thread-safe publish to HA loop
+                        self.coordinator.hass.loop.call_soon_threadsafe(
+                            self.coordinator.async_set_updated_data,
+                            panel_data,
+                        )
+
                         return True
                 except Exception as e:
                     logger.debug("[ACTION] Verify loop error (will retry): %s", e)

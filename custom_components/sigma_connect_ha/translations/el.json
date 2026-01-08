@@ -8,7 +8,7 @@
         "data": {
           "host": "Διεύθυνση IP",
           "username": "Όνομα χρήστη",
-          "password": "Κωδικός πρόσβασης Web Interface (Ixion) ",
+          "password": "Κωδικός πρόσβασης Web Interface (Ixion)",
           "pin": "PIN συναγερμου(Κωδικός πληκτρολογίου)"
         }
       }
