@@ -1,0 +1,18 @@
+coverage:
+  status:
+    project:
+      default:
+        # Require at least 70% coverage
+        target: 70%
+        # Allow 5% drop before failing
+        threshold: 5%
+    patch:
+      default:
+        # New code should have at least 60% coverage
+        target: 60%
+
+comment:
+  # Post coverage report as PR comment
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true

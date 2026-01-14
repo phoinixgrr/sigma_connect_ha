@@ -1,0 +1,13 @@
+# Test dependencies for sigma_connect_ha
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+requests-mock>=1.11.0
+
+# Home Assistant testing (2024.1.0+ required for AlarmControlPanelState)
+homeassistant>=2024.1.0
+
+# Dependencies from manifest
+requests>=2.28.0
+beautifulsoup4>=4.11.0
+voluptuous>=0.13.0

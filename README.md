@@ -3,6 +3,8 @@
 ![GitHub stars](https://img.shields.io/github/stars/phoinixgrr/sigma_connect_ha?style=social)
 [![Validate with HACS Action](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/hacs-validation.yml/badge.svg)](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/hacs-validation.yml)
 [![Validate with hassfest Action](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/hassfest-validation.yaml/badge.svg)](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/hassfest-validation.yaml)
+[![Tests](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/tests.yml/badge.svg)](https://github.com/phoinixgrr/sigma_connect_ha/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/phoinixgrr/sigma_connect_ha/branch/main/graph/badge.svg)](https://codecov.io/gh/phoinixgrr/sigma_connect_ha)
 
 # Sigma Alarm Integration for Home Assistant
 
