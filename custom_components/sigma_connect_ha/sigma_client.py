@@ -423,11 +423,27 @@ class SigmaClient:
 
             # 2) Trigger ONCE
             logger.debug(f"[ACTION] Triggering '{action}' on panel.")
-            self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5).raise_for_status()
+            action_resp = self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5)
+
+            # --- DIAGNOSTIC LOGGING START ---
+            logger.debug(f"[ACTION-DIAG] Response status code: {action_resp.status_code}")
+            logger.debug(f"[ACTION-DIAG] Response headers: {dict(action_resp.headers)}")
+            resp_preview = action_resp.text[:500].replace('\n', '\\n').replace('\r', '\\r')
+            logger.debug(f"[ACTION-DIAG] Response body (first 500 chars): {resp_preview}")
+            logger.debug(f"[ACTION-DIAG] Session cookies: {dict(self.session.cookies)}")
+            logger.debug(f"[ACTION-DIAG] Final URL (after redirects): {action_resp.url}")
+            logger.debug(f"[ACTION-DIAG] Redirect history: {[r.url for r in action_resp.history]}")
+            # --- DIAGNOSTIC LOGGING END ---
+
+            action_resp.raise_for_status()
 
             # 3) Wait/poll until the panel reports the new state (fast polling allowed)
             deadline = time.time() + 60  # seconds (tune if you want)
+            poll_count = 0
+            last_seen_state = current_status  # Track for diagnostic logging
+            last_raw_status = None
             while time.time() < deadline:
+                poll_count += 1
                 try:
                     zones_url = self._extract_zones_url(self.select_partition())
                     zones_resp = self.session.get(
@@ -437,10 +453,17 @@ class SigmaClient:
                     )
                     zones_resp.raise_for_status()
                     zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
-                    new_state, _ = self.parse_alarm_status(
-                        self.parse_zones_html(zones_soup).get("alarm_status")
-                    )
+                    parsed_zones = self.parse_zones_html(zones_soup)
+                    raw_alarm_status = parsed_zones.get("alarm_status")
+                    new_state, _ = self.parse_alarm_status(raw_alarm_status)
+                    last_seen_state = new_state  # Track for diagnostic logging
+                    last_raw_status = raw_alarm_status
                     logger.debug(f"[ACTION] Status after '{action}': {new_state}")
+
+                    # --- DIAGNOSTIC LOGGING (on first few polls and periodically) ---
+                    if poll_count <= 3 or poll_count % 10 == 0:
+                        logger.debug(f"[ACTION-DIAG] Poll #{poll_count} - Raw alarm status from HTML: '{raw_alarm_status}'")
+                        logger.debug(f"[ACTION-DIAG] Poll #{poll_count} - Parsed state: {new_state}, Desired: {desired}")
 
                     if new_state == desired:
                         logger.info(f"[ACTION SUCCESS] '{action}' reached {desired}")
@@ -478,6 +501,9 @@ class SigmaClient:
                 time.sleep(0.5)
 
             logger.error(f"[ACTION FAILED] Timeout waiting for '{action}' to become {desired}")
+            logger.error(f"[ACTION-DIAG] FAILURE SUMMARY: action='{action}', desired='{desired}', last_seen_state='{last_seen_state}', last_raw_status='{last_raw_status}', total_polls={poll_count}")
+            logger.error(f"[ACTION-DIAG] Session authenticated flag: {self._session_authenticated}")
+            logger.error(f"[ACTION-DIAG] Current cookies at failure: {dict(self.session.cookies)}")
             return False
 
         finally:
