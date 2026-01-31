@@ -386,6 +386,9 @@ class SigmaClient:
     # HIGH-LEVEL ACTION with full-flow retry
     # --------------------------------------------------------------------- #
 
+    # Polls per attempt before re-triggering action
+    POLLS_PER_ATTEMPT = 5
+
     def perform_action(self, action: str) -> bool:
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
         desired_map = {"arm": "Armed", "disarm": "Disarmed", "stay": "Armed Perimeter"}
@@ -402,6 +405,9 @@ class SigmaClient:
         logger.debug(f"[LOCK] Acquired for '{action}'")
 
         try:
+            # Brief delay to let panel settle after any recent coordinator activity
+            time.sleep(0.25)
+
             desired = desired_map[action]
 
             # 1) If already desired, exit fast
@@ -421,89 +427,86 @@ class SigmaClient:
                 logger.info(f"[ACTION] Alarm already in desired state ({desired})")
                 return True
 
-            # 2) Trigger ONCE
-            logger.debug(f"[ACTION] Triggering '{action}' on panel.")
-            action_resp = self.session.get(f"{self.base_url}/{action_map[action]}", timeout=5)
-
-            # --- DIAGNOSTIC LOGGING START ---
-            logger.debug(f"[ACTION-DIAG] Response status code: {action_resp.status_code}")
-            logger.debug(f"[ACTION-DIAG] Response headers: {dict(action_resp.headers)}")
-            resp_preview = action_resp.text[:500].replace('\n', '\\n').replace('\r', '\\r')
-            logger.debug(f"[ACTION-DIAG] Response body (first 500 chars): {resp_preview}")
-            logger.debug(f"[ACTION-DIAG] Session cookies: {dict(self.session.cookies)}")
-            logger.debug(f"[ACTION-DIAG] Final URL (after redirects): {action_resp.url}")
-            logger.debug(f"[ACTION-DIAG] Redirect history: {[r.url for r in action_resp.history]}")
-            # --- DIAGNOSTIC LOGGING END ---
-
-            action_resp.raise_for_status()
-
-            # 3) Wait/poll until the panel reports the new state (fast polling allowed)
-            deadline = time.time() + 60  # seconds (tune if you want)
-            poll_count = 0
-            last_seen_state = current_status  # Track for diagnostic logging
+            # 2) Try action with retries
+            last_seen_state = current_status
             last_raw_status = None
-            while time.time() < deadline:
-                poll_count += 1
-                try:
-                    zones_url = self._extract_zones_url(self.select_partition())
-                    zones_resp = self.session.get(
-                        f"{self.base_url}/{zones_url}",
-                        headers={"Referer": f"{self.base_url}/part.cgi"},
-                        timeout=5,
-                    )
-                    zones_resp.raise_for_status()
-                    zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
-                    parsed_zones = self.parse_zones_html(zones_soup)
-                    raw_alarm_status = parsed_zones.get("alarm_status")
-                    new_state, _ = self.parse_alarm_status(raw_alarm_status)
-                    last_seen_state = new_state  # Track for diagnostic logging
-                    last_raw_status = raw_alarm_status
-                    logger.debug(f"[ACTION] Status after '{action}': {new_state}")
+            total_polls = 0
 
-                    # --- DIAGNOSTIC LOGGING (on first few polls and periodically) ---
-                    if poll_count <= 3 or poll_count % 10 == 0:
-                        logger.debug(f"[ACTION-DIAG] Poll #{poll_count} - Raw alarm status from HTML: '{raw_alarm_status}'")
-                        logger.debug(f"[ACTION-DIAG] Poll #{poll_count} - Parsed state: {new_state}, Desired: {desired}")
+            for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
+                # Trigger action
+                logger.debug(f"[ACTION] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} - Triggering '{action}' on panel.")
+                action_resp = self.session.get(
+                    f"{self.base_url}/{action_map[action]}",
+                    headers={"Referer": f"{self.base_url}/part.cgi"},
+                    timeout=5,
+                )
+                action_resp.raise_for_status()
 
-                    if new_state == desired:
-                        logger.info(f"[ACTION SUCCESS] '{action}' reached {desired}")
+                # Log response details on first attempt
+                if attempt == 1:
+                    logger.debug(f"[ACTION-DIAG] Response status code: {action_resp.status_code}")
+                    logger.debug(f"[ACTION-DIAG] Final URL (after redirects): {action_resp.url}")
 
-                        # We already have zones_soup that proved the state.
-                        # Publish coordinator-shaped data immediately (no refresh, no deadlock).
-                        raw = self.parse_zones_html(zones_soup)
-                        parsed, bypass = self.parse_alarm_status(raw.get("alarm_status"))
-
-                        panel_data = {
-                            "status": parsed,
-                            "zones_bypassed": bypass,
-                            "battery_volt": raw.get("battery_volt"),
-                            "ac_power": raw.get("ac_power"),
-                            "zones": [
-                                {
-                                    **z,
-                                    "status": self._to_openclosed(z.get("status")),
-                                    "bypass": self._to_bool(z.get("bypass")),
-                                }
-                                for z in raw.get("zones", [])
-                            ],
-                        }
-
-                        # Thread-safe publish to HA loop
-                        self.coordinator.hass.loop.call_soon_threadsafe(
-                            self.coordinator.async_set_updated_data,
-                            panel_data,
+                # Poll for state change (limited polls per attempt)
+                for poll in range(1, self.POLLS_PER_ATTEMPT + 1):
+                    total_polls += 1
+                    try:
+                        zones_url = self._extract_zones_url(self.select_partition())
+                        zones_resp = self.session.get(
+                            f"{self.base_url}/{zones_url}",
+                            headers={"Referer": f"{self.base_url}/part.cgi"},
+                            timeout=5,
                         )
+                        zones_resp.raise_for_status()
+                        zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                        parsed_zones = self.parse_zones_html(zones_soup)
+                        raw_alarm_status = parsed_zones.get("alarm_status")
+                        new_state, _ = self.parse_alarm_status(raw_alarm_status)
+                        last_seen_state = new_state
+                        last_raw_status = raw_alarm_status
 
-                        return True
-                except Exception as e:
-                    logger.debug("[ACTION] Verify loop error (will retry): %s", e)
+                        logger.debug(f"[ACTION] Attempt {attempt}, Poll {poll} - Status: {new_state}")
 
-                time.sleep(0.5)
+                        if new_state == desired:
+                            logger.info(f"[ACTION SUCCESS] '{action}' reached {desired} (attempt {attempt}, poll {poll})")
 
-            logger.error(f"[ACTION FAILED] Timeout waiting for '{action}' to become {desired}")
-            logger.error(f"[ACTION-DIAG] FAILURE SUMMARY: action='{action}', desired='{desired}', last_seen_state='{last_seen_state}', last_raw_status='{last_raw_status}', total_polls={poll_count}")
-            logger.error(f"[ACTION-DIAG] Session authenticated flag: {self._session_authenticated}")
-            logger.error(f"[ACTION-DIAG] Current cookies at failure: {dict(self.session.cookies)}")
+                            # Publish coordinator-shaped data immediately
+                            raw = self.parse_zones_html(zones_soup)
+                            parsed, bypass = self.parse_alarm_status(raw.get("alarm_status"))
+
+                            panel_data = {
+                                "status": parsed,
+                                "zones_bypassed": bypass,
+                                "battery_volt": raw.get("battery_volt"),
+                                "ac_power": raw.get("ac_power"),
+                                "zones": [
+                                    {
+                                        **z,
+                                        "status": self._to_openclosed(z.get("status")),
+                                        "bypass": self._to_bool(z.get("bypass")),
+                                    }
+                                    for z in raw.get("zones", [])
+                                ],
+                            }
+
+                            self.coordinator.hass.loop.call_soon_threadsafe(
+                                self.coordinator.async_set_updated_data,
+                                panel_data,
+                            )
+
+                            return True
+                    except Exception as e:
+                        logger.debug("[ACTION] Poll error (will retry): %s", e)
+
+                    time.sleep(0.5)
+
+                # State didn't change after POLLS_PER_ATTEMPT polls
+                if attempt < MAX_ACTION_ATTEMPTS:
+                    logger.warning(f"[ACTION] Attempt {attempt} failed, state still '{last_seen_state}', retrying...")
+                    time.sleep(0.5)  # Brief pause before retry
+
+            logger.error(f"[ACTION FAILED] '{action}' did not reach '{desired}' after {MAX_ACTION_ATTEMPTS} attempts")
+            logger.error(f"[ACTION-DIAG] FAILURE SUMMARY: last_seen_state='{last_seen_state}', last_raw_status='{last_raw_status}', total_polls={total_polls}")
             return False
 
         finally:
