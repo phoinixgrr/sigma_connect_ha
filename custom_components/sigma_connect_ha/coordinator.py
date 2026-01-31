@@ -23,10 +23,6 @@ from .const import (
     DEFAULT_MAX_TOTAL_ATTEMPTS,
     CONF_MAX_ACTION_ATTEMPTS,
     DEFAULT_MAX_ACTION_ATTEMPTS,
-    CONF_ACTION_BASE_DELAY,
-    DEFAULT_ACTION_BASE_DELAY,
-    CONF_POST_ACTION_EXTRA_DELAY,
-    DEFAULT_POST_ACTION_EXTRA_DELAY,
     CONF_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
     CONF_ENABLE_ANALYTICS,
@@ -70,12 +66,6 @@ class SigmaCoordinator(DataUpdateCoordinator):
         )
         sigma_client.MAX_ACTION_ATTEMPTS = opts.get(
             CONF_MAX_ACTION_ATTEMPTS, DEFAULT_MAX_ACTION_ATTEMPTS
-        )
-        sigma_client.ACTION_BASE_DELAY = opts.get(
-            CONF_ACTION_BASE_DELAY, DEFAULT_ACTION_BASE_DELAY
-        )
-        sigma_client.POST_ACTION_EXTRA_DELAY = opts.get(
-            CONF_POST_ACTION_EXTRA_DELAY, DEFAULT_POST_ACTION_EXTRA_DELAY
         )
 
         self.max_total_attempts = opts.get(

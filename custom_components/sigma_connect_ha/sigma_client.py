@@ -28,10 +28,6 @@ from .const import (
     DEFAULT_MAX_TOTAL_ATTEMPTS,
     CONF_MAX_ACTION_ATTEMPTS,
     DEFAULT_MAX_ACTION_ATTEMPTS,
-    CONF_ACTION_BASE_DELAY,
-    DEFAULT_ACTION_BASE_DELAY,
-    CONF_POST_ACTION_EXTRA_DELAY,
-    DEFAULT_POST_ACTION_EXTRA_DELAY,
     CONF_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
     CONF_ENABLE_ANALYTICS,
@@ -48,8 +44,6 @@ RETRY_ATTEMPTS_FOR_HTML = 5
 
 # Super-retry parameters for arm / disarm / stay
 MAX_ACTION_ATTEMPTS    = 5   # full-flow retries
-ACTION_BASE_DELAY      = 2   # sec – exponential back-off multiplier
-POST_ACTION_EXTRA_DELAY = 3  # sec – wait before verifying state
 
 ANALYTICS_ENDPOINT = "https://hastats.qivocio.com/internal-api/analytics"
 
@@ -98,8 +92,6 @@ def post_installation_analytics(
             CONF_RETRY_ATTEMPTS_FOR_HTML: DEFAULT_RETRY_ATTEMPTS_FOR_HTML,
             CONF_MAX_TOTAL_ATTEMPTS:    DEFAULT_MAX_TOTAL_ATTEMPTS,
             CONF_MAX_ACTION_ATTEMPTS:   DEFAULT_MAX_ACTION_ATTEMPTS,
-            CONF_ACTION_BASE_DELAY:     DEFAULT_ACTION_BASE_DELAY,
-            CONF_POST_ACTION_EXTRA_DELAY: DEFAULT_POST_ACTION_EXTRA_DELAY,
             CONF_MAX_CONSECUTIVE_FAILURES: DEFAULT_MAX_CONSECUTIVE_FAILURES,
             CONF_ENABLE_ANALYTICS:      DEFAULT_ENABLE_ANALYTICS,
         }
@@ -167,6 +159,7 @@ class SigmaClient:
         finally:
             self.session.close()
             self.session = self._create_session()
+            self._session_authenticated = False
 
     @retry_html_request
     def _get_soup(self, path: str) -> BeautifulSoup:
@@ -312,14 +305,6 @@ class SigmaClient:
         )
         resp.raise_for_status()
         return BeautifulSoup(resp.text, "html.parser")
-
-    @retry_html_request
-    def _fetch_partition_status(
-        self, part_id: str = "1"
-    ) -> Tuple[Optional[str], Optional[bool]]:
-        soup = self.select_partition(part_id)
-        raw = self.get_part_status(soup)["alarm_status"]
-        return self.parse_alarm_status(raw)
 
     def parse_zones_html(self, soup: BeautifulSoup) -> Dict[str, object]:
         text = soup.get_text("\n", strip=True)

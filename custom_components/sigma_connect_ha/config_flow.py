@@ -21,10 +21,6 @@ from .const import (
     DEFAULT_MAX_TOTAL_ATTEMPTS,
     CONF_MAX_ACTION_ATTEMPTS,
     DEFAULT_MAX_ACTION_ATTEMPTS,
-    CONF_ACTION_BASE_DELAY,
-    DEFAULT_ACTION_BASE_DELAY,
-    CONF_POST_ACTION_EXTRA_DELAY,
-    DEFAULT_POST_ACTION_EXTRA_DELAY,
     CONF_MAX_CONSECUTIVE_FAILURES,
     DEFAULT_MAX_CONSECUTIVE_FAILURES,
     CONF_ENABLE_ANALYTICS,
@@ -112,14 +108,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_MAX_ACTION_ATTEMPTS,
                 default=opts.get(CONF_MAX_ACTION_ATTEMPTS, DEFAULT_MAX_ACTION_ATTEMPTS),
             ): vol.All(cv.positive_int),
-            vol.Optional(
-                CONF_ACTION_BASE_DELAY,
-                default=opts.get(CONF_ACTION_BASE_DELAY, DEFAULT_ACTION_BASE_DELAY),
-            ): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
-            vol.Optional(
-                CONF_POST_ACTION_EXTRA_DELAY,
-                default=opts.get(CONF_POST_ACTION_EXTRA_DELAY, DEFAULT_POST_ACTION_EXTRA_DELAY),
-            ): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
             vol.Optional(
                 CONF_MAX_CONSECUTIVE_FAILURES,
                 default=opts.get(CONF_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_CONSECUTIVE_FAILURES),
