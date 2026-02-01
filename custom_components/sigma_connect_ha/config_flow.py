@@ -87,31 +87,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             vol.Optional(
                 CONF_UPDATE_INTERVAL,
                 default=opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
-            ): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
-            vol.Optional(
-                CONF_RETRY_TOTAL,
-                default=opts.get(CONF_RETRY_TOTAL, DEFAULT_RETRY_TOTAL),
-            ): vol.All(cv.positive_int),
-            vol.Optional(
-                CONF_RETRY_BACKOFF_FACTOR,
-                default=opts.get(CONF_RETRY_BACKOFF_FACTOR, DEFAULT_RETRY_BACKOFF_FACTOR),
-            ): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
-            vol.Optional(
-                CONF_RETRY_ATTEMPTS_FOR_HTML,
-                default=opts.get(CONF_RETRY_ATTEMPTS_FOR_HTML, DEFAULT_RETRY_ATTEMPTS_FOR_HTML),
-            ): vol.All(cv.positive_int),
-            vol.Optional(
-                CONF_MAX_TOTAL_ATTEMPTS,
-                default=opts.get(CONF_MAX_TOTAL_ATTEMPTS, DEFAULT_MAX_TOTAL_ATTEMPTS),
-            ): vol.All(cv.positive_int),
-            vol.Optional(
-                CONF_MAX_ACTION_ATTEMPTS,
-                default=opts.get(CONF_MAX_ACTION_ATTEMPTS, DEFAULT_MAX_ACTION_ATTEMPTS),
-            ): vol.All(cv.positive_int),
-            vol.Optional(
-                CONF_MAX_CONSECUTIVE_FAILURES,
-                default=opts.get(CONF_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_CONSECUTIVE_FAILURES),
-            ): vol.All(cv.positive_int, vol.Range(min=1)),
+            ): vol.All(vol.Coerce(float), vol.Range(min=1.0)),
             vol.Optional(
                 CONF_ENABLE_ANALYTICS,
                 default=opts.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),

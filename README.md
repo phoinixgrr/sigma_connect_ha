@@ -51,25 +51,18 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
    - Username
    - Password
 
-## Advanced Settings
+## Settings
 
-After adding the integration, you can go to **Settings → Devices & Services → Sigma Alarm → Configure** to fine‑tune:
+After adding the integration, you can go to **Settings → Devices & Services → Sigma Alarm → Configure** to adjust:
 
-| Option                   | Default | Description                                                                                          |
-|--------------------------|:-------:|------------------------------------------------------------------------------------------------------|
-| **Polling Interval**     | 10 s    | How often Home Assistant polls the panel (minimum 5 s).                                               |
-| **HTTP Retry Count**     | 5       | Number of times to retry on network or HTTP errors before giving up.                                  |
-| **Retry Backoff**        | 0.5     | Exponential backoff multiplier between retry attempts (0.0 = no backoff).                            |
-| **HTML‑Parse Retries**   | 3       | How many times to retry parsing the panel’s HTML if parsing fails.                                    |
-| **Data Fetch Retries**   | 3       | Number of times the coordinator will retry fetching all panel data on error.                         |
-| **Action Command Retries** | 5     | How many times to retry arm/disarm/stay commands if the first attempt doesn’t succeed.                |
-| **Unavailable After Failures**   | 1     | Number of consecutive failed polls before marking sensors unavailable. |
+| Option                   | Default | Description                                                 |
+|--------------------------|:-------:|-------------------------------------------------------------|
+| **Alarm PIN**            | —       | Keypad code (if different from web password)                |
+| **Polling Interval**     | 10 s    | How often Home Assistant checks the panel status            |
+| **Send Analytics**       | On      | Send anonymous usage statistics to help improve the integration |
 
-![Advanced Settings](./images/advanced-settings.png "Advanced Settings")
+> **Note:** A restart of Home Assistant is required for changes to take effect.
 
-> **Warning:**
-> These settings adjust low‑level retry logic and timing. Only change them if you understand the impact otherwise, leave them at their default values.
-> Home Assistant needs to be restarted for the changes to take effect.
 
 ## How It Works
 

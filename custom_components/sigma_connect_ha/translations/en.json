@@ -23,17 +23,11 @@
   "options": {
     "step": {
       "init": {
-        "title": "Advanced Settings",
-        "description": "Only change these if you know what you're doing — otherwise leave at defaults.",
+        "title": "Settings",
+        "description": "Configure your Sigma Alarm integration.",
         "data": {
           "pin": "Alarm PIN (Keypad Code)",
           "update_interval": "Status Check Interval (seconds)",
-          "retry_total": "Network Retries (on connection errors)",
-          "retry_backoff_factor": "Retry Delay Multiplier",
-          "retry_attempts_for_html": "Page Parse Retries",
-          "max_total_attempts": "Status Fetch Retries",
-          "max_action_attempts": "Arm/Disarm Command Retries",
-          "max_consecutive_failures": "Mark Unavailable After N Failures",
           "enable_analytics": "Send Anonymous Usage Statistics"
         }
       }
