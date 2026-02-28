@@ -418,6 +418,15 @@ class SigmaClient:
             total_polls = 0
 
             for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
+                # Re-login on retry to get a fresh session
+                if attempt > 1:
+                    logger.info("[ACTION] Re-authenticating before attempt %d", attempt)
+                    self.logout()
+                    self.login()
+
+                # Always re-select partition right before action trigger
+                self.select_partition()
+
                 # Trigger action
                 logger.debug(f"[ACTION] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} - Triggering '{action}' on panel.")
                 action_resp = self.session.get(
@@ -427,10 +436,23 @@ class SigmaClient:
                 )
                 action_resp.raise_for_status()
 
-                # Log response details on first attempt
-                if attempt == 1:
-                    logger.debug(f"[ACTION-DIAG] Response status code: {action_resp.status_code}")
-                    logger.debug(f"[ACTION-DIAG] Final URL (after redirects): {action_resp.url}")
+                # Detect session expiration from response
+                if "gen_input" in action_resp.text or "login" in action_resp.url:
+                    logger.warning("[ACTION] Session expired on attempt %d, re-authenticating", attempt)
+                    logger.debug("[ACTION-DIAG] Expired response snippet: %.500s", action_resp.text[:500])
+                    self.logout()
+                    self.login()
+                    self.select_partition()
+                    action_resp = self.session.get(
+                        f"{self.base_url}/{action_map[action]}",
+                        headers={"Referer": f"{self.base_url}/part.cgi"},
+                        timeout=5,
+                    )
+                    action_resp.raise_for_status()
+
+                logger.debug("[ACTION-DIAG] Response status code: %d", action_resp.status_code)
+                logger.debug("[ACTION-DIAG] Final URL (after redirects): %s", action_resp.url)
+                logger.debug("[ACTION-DIAG] Response snippet: %.500s", action_resp.text[:500])
 
                 # Poll for state change (limited polls per attempt)
                 for poll in range(1, self.POLLS_PER_ATTEMPT + 1):
