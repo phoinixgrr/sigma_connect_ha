@@ -383,10 +383,17 @@ class SigmaClient:
             return False
 
         logger.debug(f"[LOCK] Waiting to perform '{action}'")
-        asyncio.run_coroutine_threadsafe(
-            self.coordinator.lock.acquire(),
-            self.coordinator.hass.loop
-        ).result()
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.coordinator.lock.acquire(),
+                self.coordinator.hass.loop
+            ).result(timeout=60)
+        except TimeoutError:
+            logger.error("[ACTION] Timed out waiting for lock after 60s, aborting '%s'", action)
+            return False
+        except Exception as exc:
+            logger.error("[ACTION] Failed to acquire lock for '%s': %s", action, exc)
+            return False
         logger.debug(f"[LOCK] Acquired for '{action}'")
 
         try:
@@ -395,22 +402,26 @@ class SigmaClient:
 
             desired = desired_map[action]
 
-            # 1) If already desired, exit fast
-            zones_url = self._extract_zones_url(self.select_partition())
-            zones_resp = self.session.get(
-                f"{self.base_url}/{zones_url}",
-                headers={"Referer": f"{self.base_url}/part.cgi"},
-                timeout=5,
-            )
-            zones_resp.raise_for_status()
-            zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
-            current_status, _ = self.parse_alarm_status(
-                self.parse_zones_html(zones_soup).get("alarm_status")
-            )
-            logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
-            if current_status == desired:
-                logger.info(f"[ACTION] Alarm already in desired state ({desired})")
-                return True
+            # 1) If already desired, exit fast (non-fatal if check fails)
+            current_status = None
+            try:
+                zones_url = self._extract_zones_url(self.select_partition())
+                zones_resp = self.session.get(
+                    f"{self.base_url}/{zones_url}",
+                    headers={"Referer": f"{self.base_url}/part.cgi"},
+                    timeout=5,
+                )
+                zones_resp.raise_for_status()
+                zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                current_status, _ = self.parse_alarm_status(
+                    self.parse_zones_html(zones_soup).get("alarm_status")
+                )
+                logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
+                if current_status == desired:
+                    logger.info(f"[ACTION] Alarm already in desired state ({desired})")
+                    return True
+            except Exception as exc:
+                logger.warning("[ACTION] Initial status check failed, proceeding to action: %s", exc)
 
             # 2) Try action with retries
             last_seen_state = current_status
@@ -418,31 +429,18 @@ class SigmaClient:
             total_polls = 0
 
             for attempt in range(1, MAX_ACTION_ATTEMPTS + 1):
-                # Re-login on retry to get a fresh session
-                if attempt > 1:
-                    logger.info("[ACTION] Re-authenticating before attempt %d", attempt)
-                    self.logout()
-                    self.login()
+                try:
+                    # Re-login on retry to get a fresh session
+                    if attempt > 1:
+                        logger.info("[ACTION] Re-authenticating before attempt %d", attempt)
+                        self.logout()
+                        self.login()
 
-                # Always re-select partition right before action trigger
-                self.select_partition()
-
-                # Trigger action
-                logger.debug(f"[ACTION] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} - Triggering '{action}' on panel.")
-                action_resp = self.session.get(
-                    f"{self.base_url}/{action_map[action]}",
-                    headers={"Referer": f"{self.base_url}/part.cgi"},
-                    timeout=5,
-                )
-                action_resp.raise_for_status()
-
-                # Detect session expiration from response
-                if "gen_input" in action_resp.text or "login" in action_resp.url:
-                    logger.warning("[ACTION] Session expired on attempt %d, re-authenticating", attempt)
-                    logger.debug("[ACTION-DIAG] Expired response snippet: %.500s", action_resp.text[:500])
-                    self.logout()
-                    self.login()
+                    # Always re-select partition right before action trigger
                     self.select_partition()
+
+                    # Trigger action
+                    logger.debug(f"[ACTION] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} - Triggering '{action}' on panel.")
                     action_resp = self.session.get(
                         f"{self.base_url}/{action_map[action]}",
                         headers={"Referer": f"{self.base_url}/part.cgi"},
@@ -450,9 +448,29 @@ class SigmaClient:
                     )
                     action_resp.raise_for_status()
 
-                logger.debug("[ACTION-DIAG] Response status code: %d", action_resp.status_code)
-                logger.debug("[ACTION-DIAG] Final URL (after redirects): %s", action_resp.url)
-                logger.debug("[ACTION-DIAG] Response snippet: %.500s", action_resp.text[:500])
+                    # Detect session expiration from response
+                    if "gen_input" in action_resp.text or "login" in action_resp.url:
+                        logger.warning("[ACTION] Session expired on attempt %d, re-authenticating", attempt)
+                        logger.debug("[ACTION-DIAG] Expired response snippet: %.500s", action_resp.text[:500])
+                        self.logout()
+                        self.login()
+                        self.select_partition()
+                        action_resp = self.session.get(
+                            f"{self.base_url}/{action_map[action]}",
+                            headers={"Referer": f"{self.base_url}/part.cgi"},
+                            timeout=5,
+                        )
+                        action_resp.raise_for_status()
+
+                    logger.debug("[ACTION-DIAG] Response status code: %d", action_resp.status_code)
+                    logger.debug("[ACTION-DIAG] Final URL (after redirects): %s", action_resp.url)
+                    logger.debug("[ACTION-DIAG] Response snippet: %.500s", action_resp.text[:500])
+                except Exception as exc:
+                    logger.warning("[ACTION] Attempt %d trigger failed: %s", attempt, exc)
+                    if attempt < MAX_ACTION_ATTEMPTS:
+                        time.sleep(0.5)
+                        continue
+                    break
 
                 # Poll for state change (limited polls per attempt)
                 for poll in range(1, self.POLLS_PER_ATTEMPT + 1):
