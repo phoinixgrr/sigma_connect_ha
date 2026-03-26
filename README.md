@@ -85,6 +85,8 @@ We reverse-engineered the web interface used by the alarm's IP module:
 - Tested with **Ixion v1.3.9** and:
   - **AEOLUS v12.0**
   - **S-PRO 32**
+- Tested with **Axion v1.4.0** and:
+  - **S-PRO 64**
 - ⚠️ No guarantees for other firmware versions.
 - This is still in beta form. Your mileage will vary! 
 
