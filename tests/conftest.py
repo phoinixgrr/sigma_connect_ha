@@ -72,6 +72,36 @@ SAMPLE_ZONES_HTML_PERIMETER = """
 </html>
 """
 
+SAMPLE_ZONES_HTML_CUSTOM_PARTITION = """
+<!DOCTYPE html>
+<html>
+<body>
+<div>Τμήμα 1 (ΣΠΙΤΙ): AΦOΠΛIΣMENO</div>
+<div>Μπαταρία: 13.5 Volt</div>
+<div>Παροχή 230V: ΝΑΙ</div>
+<table class="normaltable">
+    <tr><th>Zone</th><th>Description</th><th>Status</th><th>Bypass</th></tr>
+    <tr><td>1</td><td>Front Door</td><td>κλειστή</td><td>OXI</td></tr>
+</table>
+</body>
+</html>
+"""
+
+SAMPLE_ZONES_HTML_CUSTOM_PARTITION_ARMED = """
+<!DOCTYPE html>
+<html>
+<body>
+<div>Τμήμα 1 (ΣΠΙΤΙ): OΠΛIΣMENO</div>
+<div>Μπαταρία: 12.8 Volt</div>
+<div>Παροχή 230V: ΝΑΙ</div>
+<table class="normaltable">
+    <tr><th>Zone</th><th>Description</th><th>Status</th><th>Bypass</th></tr>
+    <tr><td>1</td><td>Front Door</td><td>κλειστή</td><td>OXI</td></tr>
+</table>
+</body>
+</html>
+"""
+
 SAMPLE_LOGIN_HTML = """
 <!DOCTYPE html>
 <html>

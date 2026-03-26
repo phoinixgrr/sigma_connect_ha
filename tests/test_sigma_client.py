@@ -14,6 +14,8 @@ from .conftest import (
     SAMPLE_ZONES_HTML,
     SAMPLE_ZONES_HTML_ARMED,
     SAMPLE_ZONES_HTML_PERIMETER,
+    SAMPLE_ZONES_HTML_CUSTOM_PARTITION,
+    SAMPLE_ZONES_HTML_CUSTOM_PARTITION_ARMED,
     SAMPLE_LOGIN_HTML,
 )
 
@@ -221,6 +223,58 @@ class TestParseZonesHtml:
         result = mock_sigma_client.parse_zones_html(soup)
 
         assert result["battery_volt"] is None
+
+    def test_parse_zones_html_custom_partition_name_disarmed(self, mock_sigma_client):
+        """Test parsing zones HTML when partition has a custom name like (ΣΠΙΤΙ)."""
+        soup = BeautifulSoup(SAMPLE_ZONES_HTML_CUSTOM_PARTITION, "html.parser")
+        result = mock_sigma_client.parse_zones_html(soup)
+
+        assert result["alarm_status"] == "AΦOΠΛIΣMENO"
+        assert result["battery_volt"] == 13.5
+        assert result["ac_power"] is True
+        assert len(result["zones"]) == 1
+
+    def test_parse_zones_html_custom_partition_name_armed(self, mock_sigma_client):
+        """Test parsing armed status with custom partition name."""
+        soup = BeautifulSoup(SAMPLE_ZONES_HTML_CUSTOM_PARTITION_ARMED, "html.parser")
+        result = mock_sigma_client.parse_zones_html(soup)
+
+        assert result["alarm_status"] == "OΠΛIΣMENO"
+        assert result["battery_volt"] == 12.8
+
+    def test_parse_zones_html_custom_partition_name_inline(self, mock_sigma_client):
+        """Test various custom partition name formats."""
+        # With space before parenthesis
+        html = "<html><body><div>Τμήμα 1 (ΓΡΑΦΕΙΟ): OΠΛIΣMENO</div></body></html>"
+        soup = BeautifulSoup(html, "html.parser")
+        result = mock_sigma_client.parse_zones_html(soup)
+        assert result["alarm_status"] == "OΠΛIΣMENO"
+
+        # Without space before parenthesis
+        html = "<html><body><div>Τμήμα 1(ΓΡΑΦΕΙΟ): OΠΛIΣMENO</div></body></html>"
+        soup = BeautifulSoup(html, "html.parser")
+        result = mock_sigma_client.parse_zones_html(soup)
+        assert result["alarm_status"] == "OΠΛIΣMENO"
+
+        # Multi-digit partition number
+        html = "<html><body><div>Τμήμα 12 (ΣΠΙΤΙ): ΠEPIMETPIKH OΠΛIΣH</div></body></html>"
+        soup = BeautifulSoup(html, "html.parser")
+        result = mock_sigma_client.parse_zones_html(soup)
+        assert result["alarm_status"] == "ΠEPIMETPIKH OΠΛIΣH"
+
+    def test_parse_zones_html_default_partition_still_works(self, mock_sigma_client):
+        """Regression: default partition format without custom name must still work."""
+        soup = BeautifulSoup(SAMPLE_ZONES_HTML, "html.parser")
+        result = mock_sigma_client.parse_zones_html(soup)
+        assert result["alarm_status"] == "AΦOΠΛIΣMENO"
+
+        soup = BeautifulSoup(SAMPLE_ZONES_HTML_ARMED, "html.parser")
+        result = mock_sigma_client.parse_zones_html(soup)
+        assert result["alarm_status"] == "OΠΛIΣMENO"
+
+        soup = BeautifulSoup(SAMPLE_ZONES_HTML_PERIMETER, "html.parser")
+        result = mock_sigma_client.parse_zones_html(soup)
+        assert result["alarm_status"] == "ΠEPIMETPIKH OΠΛIΣH"
 
 
 class TestRetryHtmlRequestDecorator:

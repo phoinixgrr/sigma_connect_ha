@@ -308,7 +308,7 @@ class SigmaClient:
 
     def parse_zones_html(self, soup: BeautifulSoup) -> Dict[str, object]:
         text = soup.get_text("\n", strip=True)
-        alarm_match = re.search(r"Τμήμα\s*\d+\s*:\s*(.+)", text)
+        alarm_match = re.search(r"Τμήμα\s*\d+\s*(?:\([^)]*\))?\s*:\s*(.+)", text)
         alarm_status = alarm_match.group(1).strip() if alarm_match else None
         battery_match = re.search(r"Μπαταρία:\s*([\d.]+)\s*Volt", text)
         battery_volt = float(battery_match.group(1)) if battery_match else None
