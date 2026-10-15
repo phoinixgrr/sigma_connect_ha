@@ -44,7 +44,8 @@ class SigmaAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_HOST: user_input[CONF_HOST],
                     CONF_USERNAME: user_input[CONF_USERNAME],
                     CONF_PASSWORD: user_input[CONF_PASSWORD],
-                    CONF_PIN: pin,  # save it
+                    CONF_PIN: pin,
+                    "partition_2_pin": user_input.get("partition_2_pin", "").strip(),
                 },
             )
 
@@ -52,7 +53,8 @@ class SigmaAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_HOST): str,
             vol.Required(CONF_USERNAME): str,
             vol.Required(CONF_PASSWORD): str,
-            vol.Optional(CONF_PIN, default=""): str,  # no self.config_entry here
+            vol.Optional(CONF_PIN, default=""): str,
+            vol.Optional("partition_2_pin", default=""): str,
         })
         return self.async_show_form(step_id="user", data_schema=data_schema)
 
@@ -81,17 +83,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             user_input[CONF_PIN] = pin
             return self.async_create_entry(title="", data=user_input)
 
-        opts = self.config_entry.options
+        opts = self._entry.options
         schema = vol.Schema({
-            vol.Optional(CONF_PIN, default=opts.get(CONF_PIN, "")): str,
+            vol.Optional(CONF_PIN, default=opts.get(CONF_PIN, self._entry.data.get(CONF_PIN, ""))): str,
+            vol.Optional("partition_2_pin", default=opts.get("partition_2_pin", self._entry.data.get("partition_2_pin", ""))): str,
             vol.Optional(
                 CONF_UPDATE_INTERVAL,
                 default=opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
             ): vol.All(vol.Coerce(float), vol.Range(min=1.0)),
-            vol.Optional(
-                CONF_ENABLE_ANALYTICS,
-                default=opts.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
-            ): bool,
         })
 
         return self.async_show_form(step_id="init", data_schema=schema)

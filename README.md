@@ -184,3 +184,47 @@ Disable it anytime from the "Enable analytics reporting" option in settings.
 If you find this project helpful and want to support my work, feel free to donate via PayPal:
 
 [https://paypal.me/amaziotis](https://paypal.me/amaziotis)
+
+
+## Two PIN-scoped partitions (Aeolus / Ixion)
+
+An optional **Partition 2 PIN** setting enables a second alarm entity and its zone
+status/bypass sensors. The existing alarm entity and sensor unique IDs are kept
+for partition 1. Leave the second PIN empty to use one partition.
+
+1. Keep the existing integration entry and configure the partition 1 keypad PIN.
+2. Enter the keypad PIN for partition 2 in the new optional field.
+3. Set the status check interval to **60 seconds** initially and restart Home Assistant.
+4. Verify both partition states and zone assignments before testing control.
+
+Access is serialized through one web session. Switching partitions re-authenticates
+with the corresponding PIN. The integration verifies the partition number on the
+status and control pages before sending a command, and follows the advertised
+arm/disarm/stay link. A control request is sent once, followed by status verification.
+An uncertain result raises an error rather than automatically repeating the command.
+
+Both partitions must be readable during initial setup. A later failure reading
+partition 2 makes its entities unavailable while retaining fresh partition 1 data.
+Battery and AC power remain shared sensors read from partition 1.
+
+Analytics are disabled by this implementation; partition PIN options must not enter
+usage reports. Disabling partition 2 can leave inactive registry entities that may
+be removed manually. Close other Ixion web/app sessions while diagnosing logouts.
+
+### Validation and limitations
+
+A user reports independent arm/disarm operation on **Aeolus 11.7 / Ixion 1.4.0**
+with **Home Assistant Core 2026.10.1** and separate partition PINs. Intermittent
+unavailability was observed at a short polling interval; the user reports improvement
+at 60 seconds. Long-term stability and other firmware combinations are unverified.
+Alarm-triggered state detection is not added by this change.
+
+Run the isolated protocol regression tests with:
+
+```sh
+python tests/standalone/test_partition_protocol.py
+```
+
+These tests use synthetic HTML and mocked requests, not credentials or exported
+pages from a real installation. They do not replace the existing Home Assistant
+test suite or an on-device test.
