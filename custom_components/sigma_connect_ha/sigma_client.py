@@ -95,9 +95,9 @@ def post_installation_analytics(
             CONF_MAX_CONSECUTIVE_FAILURES: DEFAULT_MAX_CONSECUTIVE_FAILURES,
             CONF_ENABLE_ANALYTICS:      DEFAULT_ENABLE_ANALYTICS,
         }
-        # overlay with whatever actually got saved
+        # overlay saved values for these keys only; never send anything else
         if config:
-            full_config.update(config)
+            full_config.update({k: config[k] for k in full_config if k in config})
 
         payload = {
             "id": unique_hash,

@@ -412,6 +412,21 @@ class TestAnalytics:
         assert payload["zones"] == 5
 
     @patch("custom_components.sigma_connect_ha.sigma_client.requests.post")
+    def test_post_analytics_config_is_allowlisted(self, mock_post):
+        """Test analytics config only carries known non-secret settings."""
+        post_installation_analytics(
+            base_url="http://192.168.1.100:5053",
+            config={"pin": "1234", "password": "secret", "update_interval": 30.0, "zones": 5},
+            version="1.1.0",
+        )
+
+        payload = mock_post.call_args.kwargs["json"]
+        assert "pin" not in payload["config"]
+        assert "password" not in payload["config"]
+        assert "1234" not in str(payload)
+        assert payload["config"]["update_interval"] == 30.0
+
+    @patch("custom_components.sigma_connect_ha.sigma_client.requests.post")
     def test_post_analytics_handles_failure_gracefully(self, mock_post):
         """Test analytics failure doesn't raise exception."""
         mock_post.side_effect = Exception("Network error")
