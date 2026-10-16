@@ -11,7 +11,8 @@ from .const import DOMAIN
 async def async_setup_entry(hass, entry, async_add_entities):
     """Create the Sigma alarm control‑panel entity."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities([SigmaAlarmPanel(coordinator, entry)])
+    async_add_entities([SigmaAlarmPanel(coordinator, entry, part)
+                        for part in coordinator.partition_ids])
 
 
 class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
@@ -24,11 +25,15 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     _attr_code_format = None
     _attr_code_arm_required = False
 
-    def __init__(self, coordinator, entry):
+    def __init__(self, coordinator, entry, partition="1"):
         super().__init__(coordinator)
         self.entry = entry
+        self.partition = partition
         self._attr_name = "Sigma Alarm Panel"
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_panel"
+        if partition != "1":
+            self._attr_name = f"Sigma Alarm Partition {partition}"
+            self._attr_unique_id += f"_partition_{partition}"
 
     # ---------------------------------------------------------------------
     # Properties
@@ -37,7 +42,10 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     @property
     def alarm_state(self):
         """Translate integration status to HA alarm panel states."""
-        status = self.coordinator.data.get("status")
+        data = self.coordinator.data or {}
+        if self.partition == "2":
+            data = data.get("partition_2") or {}
+        status = data.get("status")
         if status == "Disarmed":
             return AlarmControlPanelState.DISARMED
         if status == "Armed":
@@ -72,20 +80,18 @@ class SigmaAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     # AlarmControlPanelEntity callbacks
     # ---------------------------------------------------------------------
 
-    async def async_alarm_disarm(self, code=None):
-        await self.hass.async_add_executor_job(
-            self.coordinator.client.perform_action, "disarm"
+    @property
+    def available(self):
+        return super().available and (
+            self.partition == "1" or
+            (self.coordinator.data or {}).get("partition_2") is not None
         )
-        self.hass.async_create_task(self.coordinator.async_request_refresh())
+
+    async def async_alarm_disarm(self, code=None):
+        await self.coordinator.async_partition_action("disarm", self.partition)
 
     async def async_alarm_arm_away(self, code=None):
-        await self.hass.async_add_executor_job(
-            self.coordinator.client.perform_action, "arm"
-        )
-        self.hass.async_create_task(self.coordinator.async_request_refresh())
+        await self.coordinator.async_partition_action("arm", self.partition)
 
     async def async_alarm_arm_home(self, code=None):
-        await self.hass.async_add_executor_job(
-            self.coordinator.client.perform_action, "stay"
-        )
-        self.hass.async_create_task(self.coordinator.async_request_refresh())
+        await self.coordinator.async_partition_action("stay", self.partition)

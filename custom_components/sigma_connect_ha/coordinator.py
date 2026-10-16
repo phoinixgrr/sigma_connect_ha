@@ -29,6 +29,8 @@ from .const import (
     DEFAULT_ENABLE_ANALYTICS,
 )
 from . import sigma_client
+from .partition_client import PartitionClient
+from homeassistant.exceptions import HomeAssistantError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,13 +92,14 @@ class SigmaCoordinator(DataUpdateCoordinator):
         )
 
         base = sanitize_host(entry.data[CONF_HOST])
-        self.client = sigma_client.SigmaClient(
+        self.client = PartitionClient(
             f"http://{base}:5053",
             entry.data[CONF_USERNAME],
             entry.data[CONF_PASSWORD],
             pin,
             coordinator=self,
-            send_analytics=opts.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
+            send_analytics=False,
+            second_pin=opts.get("partition_2_pin", entry.data.get("partition_2_pin", "")),
         )
         self.client._config.update(entry.options)
 
@@ -143,23 +146,30 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     time.sleep(sigma_client.RETRY_BACKOFF_FACTOR * (2 ** (i - 1)))
         raise UpdateFailed("All fetch attempts failed")
 
-    def _fetch(self):
-        data = self.client.safe_get_status()
-        parsed, bypass = self.client.parse_alarm_status(data.get("alarm_status"))
-        if not parsed or data.get("battery_volt") is None or not data.get("zones"):
-            raise ValueError("Incomplete data")
+    @property
+    def partition_ids(self):
+        return tuple(self.client.partition_pins)
 
-        return {
-            "status": parsed,
-            "zones_bypassed": bypass,
-            "battery_volt": data.get("battery_volt"),
-            "ac_power": data.get("ac_power"),
-            "zones": [
-                {
-                    **z,
-                    "status": self.client._to_openclosed(z["status"]),
-                    "bypass": self.client._to_bool(z["bypass"]),
-                }
-                for z in data["zones"]
-            ],
-        }
+    def _fetch(self):
+        first = self.client.read_partition("1")
+        if "2" in self.partition_ids:
+            try:
+                first["partition_2"] = self.client.read_partition("2")
+            except Exception:
+                if self._last_data is None:
+                    raise
+                _LOGGER.warning("Partition 2 unavailable; check its PIN and permissions")
+                first["partition_2"] = None
+        return first
+
+    async def async_partition_action(self, action, partition):
+        async with self.lock:
+            try:
+                await self.hass.async_add_executor_job(
+                    self.client.action_partition, action, partition
+                )
+            except Exception as err:
+                raise HomeAssistantError(str(err)) from err
+            finally:
+                # A command with an uncertain response still requires a fresh status.
+                self.hass.async_create_task(self.async_request_refresh())
