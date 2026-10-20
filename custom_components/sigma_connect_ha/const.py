@@ -23,3 +23,19 @@ DEFAULT_MAX_TOTAL_ATTEMPTS = 3          # Coordinator fetch retry attempts
 DEFAULT_MAX_ACTION_ATTEMPTS = 5         # Attempts for arm/disarm/stay actions
 DEFAULT_MAX_CONSECUTIVE_FAILURES = 3    # Number of consecutive polling failures before marking data unavailable
 DEFAULT_ENABLE_ANALYTICS = True
+
+# ---------------------------------------------------------------------------
+# Correlation ID helper
+# ---------------------------------------------------------------------------
+
+def set_correlation_id(coordinator, client):
+    """Set correlation ID for tracing requests.
+    
+    This allows correlating logs across the coordinator and client
+    for easier debugging of issues.
+    """
+    from .sigma_client import generate_correlation_id
+    correlation_id = generate_correlation_id()
+    coordinator._correlation_id = correlation_id
+    client.set_correlation_id(correlation_id)
+    return correlation_id

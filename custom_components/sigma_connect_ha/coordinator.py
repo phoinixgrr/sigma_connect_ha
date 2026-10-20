@@ -48,6 +48,7 @@ class SigmaCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self._last_data = None
         self._consecutive_failures = 0
+        self._correlation_id: Optional[str] = None
 
         pin = (
             entry.options.get(CONF_PIN)
@@ -108,6 +109,7 @@ class SigmaCoordinator(DataUpdateCoordinator):
                     data = await self.hass.async_add_executor_job(self._retry_with_backoff)
                     self._last_data = data
                     self._consecutive_failures = 0
+                    logger.debug("Data update successful", extra={"correlation_id": self._correlation_id})
                     return data
                 except Exception as err:
                     self._consecutive_failures += 1
@@ -120,6 +122,7 @@ class SigmaCoordinator(DataUpdateCoordinator):
                             self._consecutive_failures,
                             self.max_consecutive_failures,
                             err,
+                            extra={"correlation_id": self._correlation_id},
                         )
                         return self._last_data
                     _LOGGER.error(
@@ -127,18 +130,20 @@ class SigmaCoordinator(DataUpdateCoordinator):
                         self._consecutive_failures,
                         self.max_consecutive_failures,
                         err,
+                        extra={"correlation_id": self._correlation_id},
                     )
                     raise UpdateFailed(
                         f"Sigma fetch failed ({self._consecutive_failures}/{self.max_consecutive_failures}): {err}"
                     )
 
     def _retry_with_backoff(self):
+        correlation_id = self._correlation_id
         for i in range(1, self.max_total_attempts + 1):
             try:
-                _LOGGER.debug("Fetch attempt %d/%d", i, self.max_total_attempts)
+                _LOGGER.debug("Fetch attempt %d/%d", i, self.max_total_attempts, extra={"correlation_id": correlation_id})
                 return self._fetch()
             except Exception as ex:
-                _LOGGER.warning("Attempt %d failed: %s", i, ex)
+                _LOGGER.warning("Attempt %d failed: %s", i, ex, extra={"correlation_id": correlation_id})
                 if i < self.max_total_attempts:
                     time.sleep(sigma_client.RETRY_BACKOFF_FACTOR * (2 ** (i - 1)))
         raise UpdateFailed("All fetch attempts failed")

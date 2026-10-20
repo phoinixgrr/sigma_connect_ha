@@ -27,7 +27,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.client._config["version"] = version
     await coordinator.async_config_entry_first_refresh()
 
-    # ---- mandatory: register one device so HA shows a card ----
+    # Generate correlation ID for this session
+    from .const import set_correlation_id
+    set_correlation_id(coordinator, coordinator.client)
+    logger = logging.getLogger(__name__)
+    logger.info("Sigma Alarm integration initialized with correlation ID: %s", coordinator._correlation_id)
+
+    # ---- mandatory: register one device so HA shows a tile ----
     dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.entry_id)},

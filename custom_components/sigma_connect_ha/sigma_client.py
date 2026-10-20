@@ -50,6 +50,53 @@ ANALYTICS_ENDPOINT = "https://hastats.qivocio.com/internal-api/analytics"
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Correlation ID for debugging
+# ---------------------------------------------------------------------------
+
+def generate_correlation_id() -> str:
+    """Generate a unique correlation ID for tracing requests."""
+    return f"{uuid.uuid4().hex[:8]}-{uuid.uuid4().hex[:4]}"
+
+def log_with_correlation_id(message: str, correlation_id: str = None, **kwargs):
+    """Log a message with correlation ID if available."""
+    if correlation_id:
+        kwargs['extra'] = kwargs.get('extra', {})
+        kwargs['extra']['correlation_id'] = correlation_id
+    logger.info(message, **kwargs)
+    CONF_UPDATE_INTERVAL,
+    DEFAULT_UPDATE_INTERVAL,
+    CONF_RETRY_TOTAL,
+    DEFAULT_RETRY_TOTAL,
+    CONF_RETRY_BACKOFF_FACTOR,
+    DEFAULT_RETRY_BACKOFF_FACTOR,
+    CONF_RETRY_ATTEMPTS_FOR_HTML,
+    DEFAULT_RETRY_ATTEMPTS_FOR_HTML,
+    CONF_MAX_TOTAL_ATTEMPTS,
+    DEFAULT_MAX_TOTAL_ATTEMPTS,
+    CONF_MAX_ACTION_ATTEMPTS,
+    DEFAULT_MAX_ACTION_ATTEMPTS,
+    CONF_MAX_CONSECUTIVE_FAILURES,
+    DEFAULT_MAX_CONSECUTIVE_FAILURES,
+    CONF_ENABLE_ANALYTICS,
+    DEFAULT_ENABLE_ANALYTICS,
+)
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+RETRY_TOTAL = 5
+RETRY_BACKOFF_FACTOR = 0.5
+RETRY_STATUS_FORCELIST = [500, 502, 503, 504]
+RETRY_ATTEMPTS_FOR_HTML = 5
+
+# Super-retry parameters for arm / disarm / stay
+MAX_ACTION_ATTEMPTS    = 5   # full-flow retries
+
+ANALYTICS_ENDPOINT = "https://hastats.qivocio.com/internal-api/analytics"
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
 # Generic HTML-parse retry decorator
 # ---------------------------------------------------------------------------
 
@@ -137,6 +184,7 @@ class SigmaClient:
         self._analytics_sent = False
         self._config: Dict[str, object] = {}
         self.coordinator = coordinator
+        self._current_correlation_id: Optional[str] = None
 
     def _create_session(self) -> requests.Session:
         s = requests.Session()
@@ -151,7 +199,18 @@ class SigmaClient:
         s.mount("https://", adapter)
         return s
 
+    def set_correlation_id(self, correlation_id: str) -> None:
+        """Set the correlation ID for tracing."""
+        self._current_correlation_id = correlation_id
+
+    def get_correlation_id(self) -> str:
+        """Get the current correlation ID, generating one if not set."""
+        if not self._current_correlation_id:
+            self._current_correlation_id = generate_correlation_id()
+        return self._current_correlation_id
+
     def logout(self) -> None:
+        correlation_id = self._current_correlation_id
         try:
             self.session.get(f"{self.base_url}/logout.html", timeout=5)
         except Exception:
@@ -160,6 +219,7 @@ class SigmaClient:
             self.session.close()
             self.session = self._create_session()
             self._session_authenticated = False
+            logger.debug("Logout completed", extra={"correlation_id": correlation_id})
 
     @retry_html_request
     def _get_soup(self, path: str) -> BeautifulSoup:
@@ -216,9 +276,12 @@ class SigmaClient:
         self.session.post(f"{self.base_url}/ucode", data=data, timeout=5).raise_for_status()
 
     def login(self) -> None:
+        correlation_id = self.get_correlation_id()
+        logger.debug("Starting login sequence", extra={"correlation_id": correlation_id})
         self._submit_login()
         self._submit_pin()
         self._session_authenticated = True
+        logger.info("Login successful", extra={"correlation_id": correlation_id})
 
     def try_zones_directly(self):
         if not self._session_authenticated:
@@ -375,26 +438,27 @@ class SigmaClient:
     POLLS_PER_ATTEMPT = 5
 
     def perform_action(self, action: str) -> bool:
+        correlation_id = self.get_correlation_id()
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
         desired_map = {"arm": "Armed", "disarm": "Disarmed", "stay": "Armed Perimeter"}
 
         if action not in action_map:
-            logger.error("Invalid action %r", action)
+            logger.error("Invalid action %r", action, extra={"correlation_id": correlation_id})
             return False
 
-        logger.debug(f"[LOCK] Waiting to perform '{action}'")
+        logger.debug(f"[LOCK] Waiting to perform '{action}'", extra={"correlation_id": correlation_id})
         try:
             asyncio.run_coroutine_threadsafe(
                 self.coordinator.lock.acquire(),
                 self.coordinator.hass.loop
             ).result(timeout=60)
         except TimeoutError:
-            logger.error("[ACTION] Timed out waiting for lock after 60s, aborting '%s'", action)
+            logger.error("[ACTION] Timed out waiting for lock after 60s, aborting '%s'", action, extra={"correlation_id": correlation_id})
             return False
         except Exception as exc:
-            logger.error("[ACTION] Failed to acquire lock for '%s': %s", action, exc)
+            logger.error("[ACTION] Failed to acquire lock for '%s': %s", action, exc, extra={"correlation_id": correlation_id})
             return False
-        logger.debug(f"[LOCK] Acquired for '{action}'")
+        logger.debug(f"[LOCK] Acquired for '{action}'", extra={"correlation_id": correlation_id})
 
         try:
             # Brief delay to let panel settle after any recent coordinator activity
@@ -416,12 +480,12 @@ class SigmaClient:
                 current_status, _ = self.parse_alarm_status(
                     self.parse_zones_html(zones_soup).get("alarm_status")
                 )
-                logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
+                logger.debug(f"[ACTION] Current status before '{action}': {current_status}", extra={"correlation_id": correlation_id})
                 if current_status == desired:
-                    logger.info(f"[ACTION] Alarm already in desired state ({desired})")
+                    logger.info(f"[ACTION] Alarm already in desired state ({desired})", extra={"correlation_id": correlation_id})
                     return True
             except Exception as exc:
-                logger.warning("[ACTION] Initial status check failed, proceeding to action: %s", exc)
+                logger.warning("[ACTION] Initial status check failed, proceeding to action: %s", exc, extra={"correlation_id": correlation_id})
 
             # 2) Try action with retries
             last_seen_state = current_status
@@ -432,7 +496,7 @@ class SigmaClient:
                 try:
                     # Re-login on retry to get a fresh session
                     if attempt > 1:
-                        logger.info("[ACTION] Re-authenticating before attempt %d", attempt)
+                        logger.info("[ACTION] Re-authenticating before attempt %d", attempt, extra={"correlation_id": correlation_id})
                         self.logout()
                         self.login()
 
@@ -440,7 +504,7 @@ class SigmaClient:
                     self.select_partition()
 
                     # Trigger action
-                    logger.debug(f"[ACTION] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} - Triggering '{action}' on panel.")
+                    logger.debug(f"[ACTION] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} - Triggering '{action}' on panel.", extra={"correlation_id": correlation_id})
                     action_resp = self.session.get(
                         f"{self.base_url}/{action_map[action]}",
                         headers={"Referer": f"{self.base_url}/part.cgi"},
@@ -450,8 +514,8 @@ class SigmaClient:
 
                     # Detect session expiration from response
                     if "gen_input" in action_resp.text or "login" in action_resp.url:
-                        logger.warning("[ACTION] Session expired on attempt %d, re-authenticating", attempt)
-                        logger.debug("[ACTION-DIAG] Expired response snippet: %.500s", action_resp.text[:500])
+                        logger.warning("[ACTION] Session expired on attempt %d, re-authenticating", attempt, extra={"correlation_id": correlation_id})
+                        logger.debug("[ACTION-DIAG] Expired response snippet: %.500s", action_resp.text[:500], extra={"correlation_id": correlation_id})
                         self.logout()
                         self.login()
                         self.select_partition()
@@ -462,11 +526,11 @@ class SigmaClient:
                         )
                         action_resp.raise_for_status()
 
-                    logger.debug("[ACTION-DIAG] Response status code: %d", action_resp.status_code)
-                    logger.debug("[ACTION-DIAG] Final URL (after redirects): %s", action_resp.url)
-                    logger.debug("[ACTION-DIAG] Response snippet: %.500s", action_resp.text[:500])
+                    logger.debug("[ACTION-DIAG] Response status code: %d", action_resp.status_code, extra={"correlation_id": correlation_id})
+                    logger.debug("[ACTION-DIAG] Final URL (after redirects): %s", action_resp.url, extra={"correlation_id": correlation_id})
+                    logger.debug("[ACTION-DIAG] Response snippet: %.500s", action_resp.text[:500], extra={"correlation_id": correlation_id})
                 except Exception as exc:
-                    logger.warning("[ACTION] Attempt %d trigger failed: %s", attempt, exc)
+                    logger.warning("[ACTION] Attempt %d trigger failed: %s", attempt, exc, extra={"correlation_id": correlation_id})
                     if attempt < MAX_ACTION_ATTEMPTS:
                         time.sleep(0.5)
                         continue
@@ -490,10 +554,10 @@ class SigmaClient:
                         last_seen_state = new_state
                         last_raw_status = raw_alarm_status
 
-                        logger.debug(f"[ACTION] Attempt {attempt}, Poll {poll} - Status: {new_state}")
+                        logger.debug(f"[ACTION] Attempt {attempt}, Poll {poll} - Status: {new_state}", extra={"correlation_id": correlation_id})
 
                         if new_state == desired:
-                            logger.info(f"[ACTION SUCCESS] '{action}' reached {desired} (attempt {attempt}, poll {poll})")
+                            logger.info(f"[ACTION SUCCESS] '{action}' reached {desired} (attempt {attempt}, poll {poll})", extra={"correlation_id": correlation_id})
 
                             # Publish coordinator-shaped data immediately
                             raw = self.parse_zones_html(zones_soup)
@@ -521,19 +585,19 @@ class SigmaClient:
 
                             return True
                     except Exception as e:
-                        logger.debug("[ACTION] Poll error (will retry): %s", e)
+                        logger.debug("[ACTION] Poll error (will retry): %s", e, extra={"correlation_id": correlation_id})
 
                     time.sleep(0.5)
 
                 # State didn't change after POLLS_PER_ATTEMPT polls
                 if attempt < MAX_ACTION_ATTEMPTS:
-                    logger.warning(f"[ACTION] Attempt {attempt} failed, state still '{last_seen_state}', retrying...")
+                    logger.warning(f"[ACTION] Attempt {attempt} failed, state still '{last_seen_state}', retrying...", extra={"correlation_id": correlation_id})
                     time.sleep(0.5)  # Brief pause before retry
 
-            logger.error(f"[ACTION FAILED] '{action}' did not reach '{desired}' after {MAX_ACTION_ATTEMPTS} attempts")
-            logger.error(f"[ACTION-DIAG] FAILURE SUMMARY: last_seen_state='{last_seen_state}', last_raw_status='{last_raw_status}', total_polls={total_polls}")
+            logger.error(f"[ACTION FAILED] '{action}' did not reach '{desired}' after {MAX_ACTION_ATTEMPTS} attempts", extra={"correlation_id": correlation_id})
+            logger.error(f"[ACTION-DIAG] FAILURE SUMMARY: last_seen_state='{last_seen_state}', last_raw_status='{last_raw_status}', total_polls={total_polls}", extra={"correlation_id": correlation_id})
             return False
 
         finally:
             self.coordinator.hass.loop.call_soon_threadsafe(self.coordinator.lock.release)
-            logger.debug(f"[LOCK] Released for '{action}'")
+            logger.debug(f"[LOCK] Released for '{action}'", extra={"correlation_id": correlation_id})
