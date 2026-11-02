@@ -49,10 +49,6 @@ ANALYTICS_ENDPOINT = "https://hastats.qivocio.com/internal-api/analytics"
 
 logger = logging.getLogger(__name__)
 
-
-class ActionNotAllowedError(ValueError):
-    """A validated panel state makes the requested transition unavailable."""
-
 # ---------------------------------------------------------------------------
 # Generic HTML-parse retry decorator
 # ---------------------------------------------------------------------------
@@ -170,11 +166,7 @@ class SigmaClient:
         url = f"{self.base_url}/{path.lstrip('/')}"
         resp = self.session.get(url, timeout=5)
         resp.raise_for_status()
-        return self._response_soup(resp)
-
-    def _response_soup(self, response):
-        """Parse a response; optional subclasses may attach safe diagnostics."""
-        return BeautifulSoup(response.text, "html.parser")
+        return BeautifulSoup(resp.text, "html.parser")
 
     def _encrypt(self, secret: str, token: str) -> Tuple[str, str]:
         S = list(range(256))
@@ -241,7 +233,7 @@ class SigmaClient:
                 timeout=5,
             )
             zones_resp.raise_for_status()
-            zones_soup = self._response_soup(zones_resp)
+            zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
             result = self.parse_zones_html(zones_soup)
 
             if not result.get("alarm_status") or result.get("battery_volt") is None or not result.get("zones"):
@@ -268,7 +260,7 @@ class SigmaClient:
                 timeout=5,
             )
             zones_resp.raise_for_status()
-            zones_soup = self._response_soup(zones_resp)
+            zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
             data = self.parse_zones_html(zones_soup)
 
         # Only fire analytics once we actually have a non-zero zone count (or give up after 3 tries)
@@ -312,7 +304,7 @@ class SigmaClient:
             f"{self.base_url}/part.cgi", data=data, headers=headers, timeout=5
         )
         resp.raise_for_status()
-        return self._response_soup(resp)
+        return BeautifulSoup(resp.text, "html.parser")
 
     def parse_zones_html(self, soup: BeautifulSoup) -> Dict[str, object]:
         text = soup.get_text("\n", strip=True)
@@ -383,50 +375,12 @@ class SigmaClient:
     POLLS_PER_ATTEMPT = 5
     ACTION_LOCK_TIMEOUT = 60
 
-    def _action_paths(self):
-        return {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
-
-    def _publish_action_data(self, data):
-        self.coordinator.hass.loop.call_soon_threadsafe(
-            self.coordinator.async_set_updated_data, data
-        )
-
     async def _acquire_action_lock(self):
-        # The event loop owns the timeout and cancels the queued waiter before
-        # reporting failure. A timed-out worker must never leave an orphan owner.
+        # The loop must cancel a timed-out waiter before the worker returns.
+        # A timeout on Future.result() alone leaves the acquisition queued.
         await asyncio.wait_for(
             self.coordinator.lock.acquire(), timeout=self.ACTION_LOCK_TIMEOUT
         )
-
-    def _validate_action_state(self, action, data):
-        """Optional firmware-specific transition checks; original client is unchanged."""
-
-    def _read_action_status(self):
-        """Original full-status read; optional firmware clients can read control state."""
-        zones_url = self._extract_zones_url(self.select_partition())
-        response = self.session.get(
-            f"{self.base_url}/{zones_url}",
-            headers={"Referer": f"{self.base_url}/part.cgi"}, timeout=5,
-        )
-        response.raise_for_status()
-        return self.parse_zones_html(self._response_soup(response))
-
-    def _prepare_action(self, action):
-        self.select_partition()
-        return self._action_paths()
-
-    def _publish_already_desired_status(self, raw):
-        """Optional client hook; preserve the original single-PIN early-return behavior."""
-
-    def _publish_action_status(self, raw):
-        parsed, bypass = self.parse_alarm_status(raw.get("alarm_status"))
-        self._publish_action_data({
-            "status": parsed, "zones_bypassed": bypass,
-            "battery_volt": raw.get("battery_volt"), "ac_power": raw.get("ac_power"),
-            "zones": [{**zone, "status": self._to_openclosed(zone.get("status")),
-                       "bypass": self._to_bool(zone.get("bypass"))}
-                      for zone in raw.get("zones", [])],
-        })
 
     def perform_action(self, action: str) -> bool:
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
@@ -443,7 +397,7 @@ class SigmaClient:
                 self.coordinator.hass.loop
             ).result()
         except TimeoutError:
-            logger.error("[ACTION] Timed out waiting for lock after %ss, aborting '%s'", self.ACTION_LOCK_TIMEOUT, action)
+            logger.error("[ACTION] Timed out waiting for lock after 60s, aborting '%s'", action)
             return False
         except Exception as exc:
             logger.error("[ACTION] Failed to acquire lock for '%s': %s", action, exc)
@@ -459,16 +413,21 @@ class SigmaClient:
             # 1) If already desired, exit fast (non-fatal if check fails)
             current_status = None
             try:
-                initial_data = self._read_action_status()
-                self._validate_action_state(action, initial_data)
-                current_status, _ = self.parse_alarm_status(initial_data.get("alarm_status"))
+                zones_url = self._extract_zones_url(self.select_partition())
+                zones_resp = self.session.get(
+                    f"{self.base_url}/{zones_url}",
+                    headers={"Referer": f"{self.base_url}/part.cgi"},
+                    timeout=5,
+                )
+                zones_resp.raise_for_status()
+                zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                current_status, _ = self.parse_alarm_status(
+                    self.parse_zones_html(zones_soup).get("alarm_status")
+                )
                 logger.debug(f"[ACTION] Current status before '{action}': {current_status}")
                 if current_status == desired:
                     logger.info(f"[ACTION] Alarm already in desired state ({desired})")
-                    self._publish_already_desired_status(initial_data)
                     return True
-            except ActionNotAllowedError:
-                raise
             except Exception as exc:
                 logger.warning("[ACTION] Initial status check failed, proceeding to action: %s", exc)
 
@@ -485,8 +444,8 @@ class SigmaClient:
                         self.logout()
                         self.login()
 
-                    # Preparation validates the selected partition immediately before triggering.
-                    action_map = self._prepare_action(action)
+                    # Always re-select partition right before action trigger
+                    self.select_partition()
 
                     # Trigger action
                     logger.debug(f"[ACTION] Attempt {attempt}/{MAX_ACTION_ATTEMPTS} - Triggering '{action}' on panel.")
@@ -503,7 +462,7 @@ class SigmaClient:
                         logger.debug("[ACTION-DIAG] Expired response snippet: %.500s", action_resp.text[:500])
                         self.logout()
                         self.login()
-                        action_map = self._prepare_action(action)
+                        self.select_partition()
                         action_resp = self.session.get(
                             f"{self.base_url}/{action_map[action]}",
                             headers={"Referer": f"{self.base_url}/part.cgi"},
@@ -514,8 +473,6 @@ class SigmaClient:
                     logger.debug("[ACTION-DIAG] Response status code: %d", action_resp.status_code)
                     logger.debug("[ACTION-DIAG] Final URL (after redirects): %s", action_resp.url)
                     logger.debug("[ACTION-DIAG] Response snippet: %.500s", action_resp.text[:500])
-                except ActionNotAllowedError:
-                    raise
                 except Exception as exc:
                     logger.warning("[ACTION] Attempt %d trigger failed: %s", attempt, exc)
                     if attempt < MAX_ACTION_ATTEMPTS:
@@ -527,7 +484,15 @@ class SigmaClient:
                 for poll in range(1, self.POLLS_PER_ATTEMPT + 1):
                     total_polls += 1
                     try:
-                        parsed_zones = self._read_action_status()
+                        zones_url = self._extract_zones_url(self.select_partition())
+                        zones_resp = self.session.get(
+                            f"{self.base_url}/{zones_url}",
+                            headers={"Referer": f"{self.base_url}/part.cgi"},
+                            timeout=5,
+                        )
+                        zones_resp.raise_for_status()
+                        zones_soup = BeautifulSoup(zones_resp.text, "html.parser")
+                        parsed_zones = self.parse_zones_html(zones_soup)
                         raw_alarm_status = parsed_zones.get("alarm_status")
                         new_state, _ = self.parse_alarm_status(raw_alarm_status)
                         last_seen_state = new_state
@@ -538,8 +503,29 @@ class SigmaClient:
                         if new_state == desired:
                             logger.info(f"[ACTION SUCCESS] '{action}' reached {desired} (attempt {attempt}, poll {poll})")
 
-                            # Use the validated read, including header-only optional control state.
-                            self._publish_action_status(parsed_zones)
+                            # Publish coordinator-shaped data immediately
+                            raw = self.parse_zones_html(zones_soup)
+                            parsed, bypass = self.parse_alarm_status(raw.get("alarm_status"))
+
+                            panel_data = {
+                                "status": parsed,
+                                "zones_bypassed": bypass,
+                                "battery_volt": raw.get("battery_volt"),
+                                "ac_power": raw.get("ac_power"),
+                                "zones": [
+                                    {
+                                        **z,
+                                        "status": self._to_openclosed(z.get("status")),
+                                        "bypass": self._to_bool(z.get("bypass")),
+                                    }
+                                    for z in raw.get("zones", [])
+                                ],
+                            }
+
+                            self.coordinator.hass.loop.call_soon_threadsafe(
+                                self.coordinator.async_set_updated_data,
+                                panel_data,
+                            )
 
                             return True
                     except Exception as e:

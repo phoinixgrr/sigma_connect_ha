@@ -10,6 +10,8 @@ from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 
 from .const import (
     DOMAIN,
+    CONF_PARTITION_2_PIN,
+    MIN_PARTITION_UPDATE_INTERVAL,
     CONF_PIN,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
@@ -78,6 +80,9 @@ class SigmaCoordinator(DataUpdateCoordinator):
         )
 
         interval = opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        second_pin = opts.get(CONF_PARTITION_2_PIN, entry.data.get(CONF_PARTITION_2_PIN, "")).strip()
+        if second_pin:
+            interval = max(interval, MIN_PARTITION_UPDATE_INTERVAL)
         update_interval = timedelta(seconds=interval)
 
         # Locks: one for polling, one to serialize actions
@@ -104,7 +109,6 @@ class SigmaCoordinator(DataUpdateCoordinator):
         )
         self.partition_ids = ("1",)
         self._partition_failures = {"1": 0, "2": 0}
-        second_pin = opts.get("partition_2_pin", entry.data.get("partition_2_pin", "")).strip()
         if second_pin:
             self.client.session.close()
             self.client = PartitionClient(

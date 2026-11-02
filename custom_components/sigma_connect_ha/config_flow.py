@@ -9,6 +9,8 @@ from homeassistant.components.persistent_notification import async_create as asy
 
 from .const import (
     DOMAIN,
+    CONF_PARTITION_2_PIN,
+    MIN_PARTITION_UPDATE_INTERVAL,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
     CONF_RETRY_TOTAL,
@@ -45,7 +47,7 @@ class SigmaAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_USERNAME: user_input[CONF_USERNAME],
                     CONF_PASSWORD: user_input[CONF_PASSWORD],
                     CONF_PIN: pin,
-                    "partition_2_pin": user_input.get("partition_2_pin", "").strip(),
+                    CONF_PARTITION_2_PIN: user_input.get(CONF_PARTITION_2_PIN, "").strip(),
                 },
             )
 
@@ -54,7 +56,7 @@ class SigmaAlarmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_USERNAME): str,
             vol.Required(CONF_PASSWORD): str,
             vol.Optional(CONF_PIN, default=""): str,
-            vol.Optional("partition_2_pin", default=""): str,
+            vol.Optional(CONF_PARTITION_2_PIN, default=""): str,
         })
         return self.async_show_form(step_id="user", data_schema=data_schema)
 
@@ -80,13 +82,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             )
             pin = (user_input.get(CONF_PIN) or "").strip()
             user_input[CONF_PIN] = pin
-            user_input["partition_2_pin"] = user_input.get("partition_2_pin", "").strip()
+            user_input[CONF_PARTITION_2_PIN] = user_input.get(CONF_PARTITION_2_PIN, "").strip()
+            if user_input[CONF_PARTITION_2_PIN]:
+                user_input[CONF_UPDATE_INTERVAL] = max(
+                    float(user_input.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)),
+                    MIN_PARTITION_UPDATE_INTERVAL,
+                )
             return self.async_create_entry(title="", data=user_input)
 
         opts = self._entry.options
         schema = vol.Schema({
             vol.Optional(CONF_PIN, default=opts.get(CONF_PIN, self._entry.data.get(CONF_PIN, ""))): str,
-            vol.Optional("partition_2_pin", default=opts.get("partition_2_pin", self._entry.data.get("partition_2_pin", ""))): str,
+            vol.Optional(CONF_PARTITION_2_PIN, default=opts.get(CONF_PARTITION_2_PIN, self._entry.data.get(CONF_PARTITION_2_PIN, ""))): str,
             vol.Optional(
                 CONF_UPDATE_INTERVAL,
                 default=opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),

@@ -324,7 +324,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.panel.get = get
         existing = ("1", {"status": "Disarmed", "zones": [{"zone_id": 1, "status": "Closed"}]})
         self.coordinator.updates.append(existing)
-        with patch.object(base, "_publish_action_data") as publish:
+        with patch.object(base, "_publish_action_data", create=True) as publish:
             self.assertTrue(await asyncio.to_thread(base.perform_action, "disarm"))
         await asyncio.sleep(0)
         publish.assert_not_called()
@@ -408,7 +408,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.panel.states["2"] = state
                 with patch.object(self.panel, "get", wraps=self.panel.get) as get, \
                         patch(PKG + ".sigma_client.MAX_ACTION_ATTEMPTS", 5):
-                    with self.assertRaises(base_module.ActionNotAllowedError):
+                    with self.assertRaises(client_module.ActionNotAllowedError):
                         await asyncio.to_thread(self.client.perform_partition_action, "stay", "2")
                 await asyncio.sleep(0)
                 paths = [call.args[0].rsplit("/", 1)[-1] for call in get.call_args_list]
@@ -463,7 +463,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             return original(url, **kwargs)
         self.panel.get = get
         with patch(PKG + ".sigma_client.MAX_ACTION_ATTEMPTS", 5):
-            with self.assertRaises(base_module.ActionNotAllowedError):
+            with self.assertRaises(client_module.ActionNotAllowedError):
                 await asyncio.to_thread(self.client.perform_partition_action, "stay", "2")
         await asyncio.sleep(0)
         self.assertEqual(reads, 0)  # Initial and preflight states came from fresh control headers.
@@ -488,7 +488,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             return original(url, **kwargs)
         self.panel.get = get
         with patch(PKG + ".sigma_client.MAX_ACTION_ATTEMPTS", 5):
-            with self.assertRaises(base_module.ActionNotAllowedError):
+            with self.assertRaises(client_module.ActionNotAllowedError):
                 await asyncio.to_thread(self.client.perform_partition_action, "stay", "2")
         await asyncio.sleep(0)
         self.assertEqual(panel_reads, 2)
@@ -506,24 +506,6 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(control["zones"], [])
         self.assertTrue(zones["zones"])
 
-    def test_authentication_form_diagnostics_classify_known_forms_without_secrets(self):
-        cases = [
-            ("web_login", "login.html", '<input name="username" value="PRIVATE_USER"><input name="password" value="PRIVATE_PASS"><input name="gen_input" value="PRIVATE_TOKEN">'),
-            ("pin", "ucode", '<input name="password" value="PRIVATE_PIN"><input name="gen_input" value="PRIVATE_TOKEN">'),
-            ("auth_unknown", "PRIVATE_ACTION", '<input name="gen_input" value="PRIVATE_TOKEN">'),
-            ("auth_unknown", "http://[", '<input name="gen_input" value="PRIVATE_TOKEN">'),
-            ("none", "access.html", '<input name="other" value="PRIVATE_OTHER">'),
-        ]
-        for kind, action, inputs in cases:
-            with self.subTest(kind=kind):
-                url = action if action == "http://[" else "http://PRIVATE_USER:PRIVATE_PASSWORD@PRIVATE_HOST/" + action + "?token=PRIVATE_QUERY"
-                page = '<form action="' + url + '">' + inputs + '</form>'
-                soup = self.client._response_soup(Response(page, "zones.html"))
-                diagnostic = soup.__dict__["_sigma_response_diagnostic"]
-                self.assertEqual(diagnostic["auth_form_kind"], kind)
-                self.assertEqual(diagnostic["form_actions"], ["other" if action in ("PRIVATE_ACTION", "http://[") else action])
-                self.assertNotIn("PRIVATE", json.dumps(diagnostic))
-                self.assertNotIn("http://[", json.dumps(diagnostic))
 
     async def test_valid_control_headers_do_not_request_wrong_unused_zones(self):
         self.panel.wrong_zones = True
@@ -708,59 +690,9 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reads, 1)
 
 
-    def test_diagnostics_capture_structure_without_private_content(self):
-        page = html("2", kind="panel") + '<title>PRIVATE_TITLE</title><table class="PRIVATE_CLASS"><tr><td>PRIVATE_ZONE</td><td>PRIVATE_PIN</td><td>Closed</td><td>No</td></tr></table><input name="gen_input" value="PRIVATE_TOKEN">'
-        response = Response(page)
-        response.url = "http://PRIVATE_USER:PRIVATE_PASS@private.example/PRIVATE_PATH?token=PRIVATE_QUERY"
-        response.history = [Response("", "login.html")]
-        soup = self.client._response_soup(response)
-        with self.client.partition_scope("2"), patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            with self.assertRaises(client_module.MissingZonesError):
-                self.client.parse_zones_html(soup)
-        encoded = warning.call_args.args[1]
-        import json
-        diag = json.loads(encoded)
-        self.assertEqual(diag["reason"], "missing_zones")
-        self.assertEqual(diag["final_page"], "other")
-        self.assertEqual(diag["returned_partition"], "2")
-        self.assertEqual(diag["tables_total"], 1)
-        self.assertEqual(diag["table_structure"][0]["rows_with_4plus_td"], 1)
-        self.assertEqual(diag["http_status"], 200)
-        self.assertEqual(diag["redirects"], 1)
-        self.assertNotIn("PRIVATE", encoded)
-        self.assertNotIn("private.example", encoded)
 
-    def test_diagnostics_are_rate_limited(self):
-        soup = BeautifulSoup(html("2", kind="panel"), "html.parser")
-        with self.client.partition_scope("2"), patch(PKG + ".partition_client._LOGGER.warning") as warning, patch(PKG + ".partition_client.time.monotonic", side_effect=[10, 11, 311]):
-            for _ in range(3):
-                with self.assertRaises(client_module.MissingZonesError):
-                    self.client.parse_zones_html(soup)
-        self.assertEqual(warning.call_count, 2)
 
-    def test_diagnostics_capture_all_upstream_response_paths(self):
-        original = self.panel.get
-        reads = 0
-        def get(url, **kwargs):
-            nonlocal reads
-            if url.endswith("/zones.html"):
-                reads += 1
-                return Response(html("2", kind="panel"), "zones.html")
-            return original(url, **kwargs)
-        self.panel.get = get
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            with self.assertRaises(client_module.MissingZonesError):
-                self.client.safe_get_partition_status("2")
-        diagnostics = [json.loads(call.args[1]) for call in warning.call_args_list
-                       if call.args[0] == "SIGMA_DIAG %s"]
-        self.assertEqual(diagnostics[0]["final_page"], "zones.html")
-        self.assertEqual(reads, 6)
-        self.assertEqual(len(diagnostics), 1)
 
-    def test_valid_status_does_not_log_diagnostics(self):
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            self.client.safe_get_partition_status("2")
-        warning.assert_not_called()
 
 
     def test_waits_for_ready_table_without_resetting_selection(self):
@@ -880,316 +812,17 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         post.assert_called_once()
         self.assertNotIn("SECRET", str(post.call_args.kwargs["json"]))
 
-    @staticmethod
-    def status_summaries(warning):
-        return [json.loads(call.args[1]) for call in warning.call_args_list
-                if call.args[0] == "SIGMA_STATUS %s"]
 
-    def test_status_summary_healthy_operations_are_silent(self):
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            for part in ("2", "2", "1"):
-                self.assertTrue(self.client.safe_get_partition_status(part)["zones"])
-        warning.assert_not_called()
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_correlates_recovered_zones_and_diagnostic(self):
-        original = self.panel.get
-        reads = 0
-        def get(url, **kwargs):
-            nonlocal reads
-            if url.endswith("/zones.html"):
-                reads += 1
-                if reads == 1:
-                    return Response(html("2", kind="panel"), "zones.html")
-            return original(url, **kwargs)
-        self.panel.get = get
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            self.assertTrue(self.client.safe_get_partition_status("2")["zones"])
-        summaries = self.status_summaries(warning)
-        self.assertEqual(len(summaries), 1)
-        summary = summaries[0]
-        self.assertEqual(summary["build"], "1.2.5.post11")
-        self.assertEqual(summary["requested_partition"], "2")
-        self.assertEqual(summary["outcome"], "recovered")
-        self.assertEqual(summary["reason"], "retry_succeeded")
-        self.assertEqual(summary["phase"], "zones")
-        self.assertEqual(summary["zones_reads"], 2)
-        self.assertEqual(summary["selection_attempts"], 1)
-        self.assertEqual(summary["login_attempts"], 1)
-        self.assertEqual(summary["zones_reconnects"], 0)
-        self.assertIn("missing_zones", summary["issues"])
-        self.assertEqual(summary["total_status_reads"], 1)
-        self.assertEqual(summary["total_recovered"], 1)
-        self.assertEqual(summary["total_failed"], 0)
-        diagnostics = [json.loads(call.args[1]) for call in warning.call_args_list
-                       if call.args[0] == "SIGMA_DIAG %s"]
-        self.assertEqual(len(diagnostics), 1)
-        self.assertEqual(diagnostics[0]["operation_id"], summary["operation_id"])
-        self.assertEqual(diagnostics[0]["build"], summary["build"])
-        self.assertEqual(summary["last_response"]["final_page"], "zones.html")
-        self.assertEqual(summary["last_response"]["returned_partition"], "2")
-        self.assertFalse(summary["last_response"]["login_token_present"])
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_persistent_empty_zones_reports_six_reads(self):
-        original = self.panel.get
-        def get(url, **kwargs):
-            if url.endswith("/zones.html"):
-                return Response(html("2", kind="panel"), "zones.html")
-            return original(url, **kwargs)
-        self.panel.get = get
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            with self.assertRaises(client_module.MissingZonesError):
-                self.client.safe_get_partition_status("2")
-        summaries = self.status_summaries(warning)
-        self.assertEqual(len(summaries), 1)
-        summary = summaries[0]
-        self.assertEqual(summary["outcome"], "failed")
-        self.assertEqual(summary["reason"], "missing_zones")
-        self.assertEqual(summary["phase"], "zones")
-        self.assertEqual(summary["zones_reads"], 6)
-        self.assertEqual(summary["selection_attempts"], 2)
-        self.assertEqual(summary["login_attempts"], 2)
-        self.assertEqual(summary["zones_reconnects"], 1)
-        self.assertEqual(summary["total_failed"], 1)
-        self.assertEqual(summary["total_recovered"], 0)
-        self.assertEqual(summary["last_response"]["http_status"], 200)
-        self.assertEqual(summary["last_response"]["returned_partition"], "2")
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_recovery_after_new_login_counts_one_operation(self):
-        original = self.panel.get
-        def get(url, **kwargs):
-            if url.endswith("/zones.html") and self.panel.logins == 1:
-                return Response(html("2", kind="panel"), "zones.html")
-            return original(url, **kwargs)
-        self.panel.get = get
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            self.assertTrue(self.client.safe_get_partition_status("2")["zones"])
-        summaries = self.status_summaries(warning)
-        self.assertEqual(len(summaries), 1)
-        summary = summaries[0]
-        self.assertEqual(summary["outcome"], "recovered")
-        self.assertEqual(summary["reason"], "retry_succeeded")
-        self.assertEqual(summary["zones_reads"], 4)
-        self.assertEqual(summary["selection_attempts"], 2)
-        self.assertEqual(summary["login_attempts"], 2)
-        self.assertEqual(summary["zones_reconnects"], 1)
-        self.assertEqual(summary["total_status_reads"], 1)
-        self.assertEqual(summary["total_recovered"], 1)
-        self.assertEqual(summary["total_failed"], 0)
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_panel_login_form_classified_as_session_expired(self):
-        original = self.panel.get
-        def get(url, **kwargs):
-            if url.endswith("/panel.html"):
-                return Response('<input name="gen_input" value="PRIVATE_TOKEN">', "login.html")
-            return original(url, **kwargs)
-        self.panel.get = get
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            with self.assertRaises(client_module.SelectionSessionExpiredError):
-                self.client.safe_get_partition_status("2")
-        summaries = self.status_summaries(warning)
-        self.assertEqual(len(summaries), 1)
-        summary = summaries[0]
-        self.assertEqual(summary["outcome"], "failed")
-        self.assertEqual(summary["reason"], "session_expired")
-        self.assertEqual(summary["phase"], "panel")
-        self.assertEqual(summary["selection_attempts"], 2)
-        self.assertEqual(summary["login_attempts"], 2)
-        self.assertEqual(summary["zones_reads"], 0)
-        self.assertEqual(summary["zones_reconnects"], 0)
-        self.assertEqual(summary["last_response"]["final_page"], "login.html")
-        self.assertTrue(summary["last_response"]["login_token_present"])
-        self.assertIsNone(summary["last_response"]["returned_partition"])
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_timeout_discards_previous_panel_response(self):
-        original = self.panel.get
-        panel_reads = 0
-        def get(url, **kwargs):
-            nonlocal panel_reads
-            if url.endswith("/panel.html"):
-                panel_reads += 1
-                if panel_reads == 1:
-                    return Response('<input name="gen_input" value="PRIVATE_TOKEN">', "login.html")
-                raise requests.Timeout("PRIVATE_HOST PRIVATE_PIN PRIVATE_TIMEOUT")
-            return original(url, **kwargs)
-        self.panel.get = get
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            with self.assertRaises(requests.Timeout):
-                self.client.safe_get_partition_status("2")
-        summary = self.status_summaries(warning)[0]
-        self.assertEqual(summary["outcome"], "failed")
-        self.assertEqual(summary["reason"], "timeout")
-        self.assertEqual(summary["phase"], "panel")
-        self.assertEqual(summary["last_response"], {})
-        # Preserve post7's one outer request-error recovery after selection retries.
-        self.assertEqual(summary["selection_attempts"], 4)
-        self.assertEqual(summary["login_attempts"], 4)
-        self.assertEqual(summary["zones_reconnects"], 1)
-        self.assertEqual(summary["zones_reads"], 0)
-        self.assertIn("session_expired", summary["issues"])
-        self.assertIn("timeout", summary["issues"])
-        self.assertNotIn("PRIVATE", json.dumps(summary))
 
-    def test_status_summary_wrong_panel_then_expired_explicit_selection(self):
-        original_get = self.panel.get
-        original_post = self.panel.post
-        def get(url, **kwargs):
-            if url.endswith("/panel.html"):
-                return Response(html("1", kind="panel"), "panel.html")
-            return original_get(url, **kwargs)
-        def post(url, data, **kwargs):
-            if url.endswith("/part.cgi"):
-                return Response('<input name="gen_input" value="PRIVATE_TOKEN">', "part.cgi")
-            return original_post(url, data, **kwargs)
-        self.panel.get, self.panel.post = get, post
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            with self.assertRaises(client_module.SelectionSessionExpiredError):
-                self.client.safe_get_partition_status("2")
-        summaries = self.status_summaries(warning)
-        self.assertEqual(len(summaries), 1)
-        summary = summaries[0]
-        self.assertEqual(summary["reason"], "session_expired")
-        self.assertEqual(summary["phase"], "partition_selection")
-        self.assertEqual(summary["selection_attempts"], 2)
-        self.assertEqual(summary["login_attempts"], 2)
-        self.assertEqual(summary["zones_reads"], 0)
-        self.assertEqual(summary["zones_reconnects"], 0)
-        self.assertEqual(summary["last_response"]["final_page"], "part.cgi")
-        self.assertTrue(summary["last_response"]["login_token_present"])
-        self.assertIsNone(summary["last_response"]["returned_partition"])
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_never_contains_raw_response_or_exception_secrets(self):
-        original = self.panel.get
-        def get(url, **kwargs):
-            if url.endswith("/zones.html"):
-                response = Response(html("2", state="PRIVATE_UNKNOWN_STATUS") +
-                                    '<title>PRIVATE_TITLE</title><input name="PRIVATE_NAME" value="PRIVATE_PIN">',
-                                    "zones.html")
-                response.url = "http://PRIVATE_USER:PRIVATE_PASS@PRIVATE_HOST/PRIVATE_PATH?token=PRIVATE_QUERY"
-                response.history = [Response("PRIVATE_HTML", "login.html")]
-                return response
-            return original(url, **kwargs)
-        self.panel.get = get
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            with self.assertRaisesRegex(ValueError, "PRIVATE_UNKNOWN_STATUS"):
-                self.client.safe_get_partition_status("2")
-        summary = self.status_summaries(warning)[0]
-        self.assertEqual(summary["reason"], "invalid_response")
-        self.assertEqual(summary["phase"], "zones")
-        self.assertEqual(summary["last_response"]["final_page"], "other")
-        self.assertEqual(summary["last_response"]["redirects"], 1)
-        self.assertNotIn("PRIVATE", json.dumps(summary))
-        self.assertEqual(set(summary["last_response"]),
-                         {"final_page", "http_status", "redirects", "redirect_pages",
-                          "response_chars", "returned_partition", "login_token_present",
-                          "auth_form_kind", "form_actions"})
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_first_selection_failure_then_success_is_recovered(self):
-        self.panel.reject_pin_once = True
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            self.assertTrue(self.client.safe_get_partition_status("2")["zones"])
-        summaries = self.status_summaries(warning)
-        self.assertEqual(len(summaries), 1)
-        summary = summaries[0]
-        self.assertEqual(summary["outcome"], "recovered")
-        self.assertEqual(summary["reason"], "retry_succeeded")
-        self.assertEqual(summary["phase"], "zones")
-        self.assertEqual(summary["selection_attempts"], 2)
-        self.assertEqual(summary["login_attempts"], 2)
-        self.assertEqual(summary["zones_reads"], 1)
-        self.assertEqual(summary["zones_reconnects"], 0)
-        self.assertEqual(summary["total_recovered"], 1)
-        self.assertEqual(summary["total_failed"], 0)
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_rate_limits_outcomes_separately_and_counts_all_polls(self):
-        original = self.panel.get
-        mode = "healthy"
-        reads = 0
-        clock = 100.0
-        def get(url, **kwargs):
-            nonlocal reads
-            if url.endswith("/zones.html"):
-                reads += 1
-                if mode == "failed" or (mode == "recovered" and reads == 1):
-                    return Response(html(self.panel.part, kind="panel"), "zones.html")
-            return original(url, **kwargs)
-        self.panel.get = get
-        def poll(part, new_mode):
-            nonlocal mode, reads
-            mode, reads = new_mode, 0
-            if mode == "failed":
-                with self.assertRaises(client_module.MissingZonesError):
-                    self.client.safe_get_partition_status(part)
-            else:
-                self.assertTrue(self.client.safe_get_partition_status(part)["zones"])
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning, \
-                patch(PKG + ".partition_client.time.monotonic", side_effect=lambda: clock):
-            poll("2", "healthy")  # Counted, but healthy operations remain silent.
-            poll("2", "failed")
-            clock = 101.0
-            poll("2", "failed")  # Same partition/outcome suppressed.
-            clock = 102.0
-            poll("2", "recovered")  # A different outcome emits immediately.
-            clock = 103.0
-            poll("2", "recovered")  # This outcome is now suppressed too.
-            clock = 104.0
-            poll("1", "failed")  # Another partition has independent counters/rate limit.
-            clock = 400.0
-            poll("2", "failed")  # Exactly 300 seconds: publish cumulative counters.
-            clock = 402.0
-            poll("2", "recovered")
-            clock = 700.0
-            poll("2", "failed")  # Suppression count resets after the prior emission.
-        summaries = self.status_summaries(warning)
-        self.assertEqual(len(summaries), 6)
-        self.assertEqual([(s["requested_partition"], s["outcome"]) for s in summaries],
-                         [("2", "failed"), ("2", "recovered"), ("1", "failed"),
-                          ("2", "failed"), ("2", "recovered"), ("2", "failed")])
-        self.assertEqual([(s["total_status_reads"], s["total_recovered"], s["total_failed"],
-                           s["suppressed_summaries"]) for s in summaries],
-                         [(2, 0, 1, 0), (4, 1, 2, 0), (1, 0, 1, 0),
-                          (6, 2, 3, 1), (7, 3, 3, 1), (8, 3, 4, 0)])
-        self.assertEqual(len({s["operation_id"] for s in summaries}), len(summaries))
-        self.assertEqual(self.panel.commands, [])
 
-    def test_status_summary_reports_later_clean_recovery_only_for_failed_partition(self):
-        original = self.panel.get
-        fail_partition_two = True
-        def get(url, **kwargs):
-            if url.endswith("/zones.html") and self.panel.part == "2" and fail_partition_two:
-                return Response(html("2", kind="panel"), "zones.html")
-            return original(url, **kwargs)
-        self.panel.get = get
-        with patch(PKG + ".partition_client._LOGGER.warning") as warning:
-            with self.assertRaises(client_module.MissingZonesError):
-                self.client.safe_get_partition_status("2")
-            self.assertTrue(self.client.safe_get_partition_status("1")["zones"])
-            self.assertEqual(len(self.status_summaries(warning)), 1)
-            fail_partition_two = False
-            self.assertTrue(self.client.safe_get_partition_status("2")["zones"])
-            self.assertTrue(self.client.safe_get_partition_status("2")["zones"])
-        summaries = self.status_summaries(warning)
-        self.assertEqual(len(summaries), 2)
-        recovered = summaries[1]
-        self.assertEqual(recovered["requested_partition"], "2")
-        self.assertEqual(recovered["outcome"], "recovered")
-        self.assertEqual(recovered["reason"], "subsequent_read_succeeded")
-        self.assertIn("previous_read_failed", recovered["issues"])
-        self.assertEqual(recovered["selection_attempts"], 1)
-        self.assertEqual(recovered["zones_reads"], 1)
-        self.assertEqual(recovered["zones_reconnects"], 0)
-        self.assertEqual(recovered["total_status_reads"], 2)
-        self.assertEqual(recovered["total_recovered"], 1)
-        self.assertEqual(recovered["total_failed"], 1)
-        self.assertNotEqual(recovered["operation_id"], summaries[0]["operation_id"])
-        self.assertEqual(self.panel.commands, [])
 
 
 

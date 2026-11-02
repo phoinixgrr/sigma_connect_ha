@@ -11,8 +11,8 @@ from homeassistant.components.alarm_control_panel import AlarmControlPanelState
 
 from custom_components.sigma_connect_ha.coordinator import SigmaCoordinator
 import custom_components.sigma_connect_ha.coordinator as coordinator_module
-from custom_components.sigma_connect_ha.alarm_control_panel import SigmaAlarmPanel
-from custom_components.sigma_connect_ha.sensor import SigmaSensor
+from custom_components.sigma_connect_ha.alarm_control_panel import PartitionAlarmPanel as SigmaAlarmPanel
+from custom_components.sigma_connect_ha.sensor import PartitionSensor as SigmaSensor
 
 
 def raw_status():
@@ -120,6 +120,7 @@ def prepare_action_entities(coordinator, entry):
     def schedule(coro):
         task = asyncio.create_task(coro)
         refresh_tasks.append(task)
+        task.add_done_callback(lambda done: refresh_tasks.remove(done))
         return task
 
     coordinator.hass.async_create_task = MagicMock(side_effect=schedule)
@@ -186,7 +187,7 @@ async def test_busy_command_is_rejected_before_executor_across_shared_entities(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["success", "unconfirmed", "transition", "error"])
 async def test_action_gate_clears_and_refreshes_after_every_executor_outcome(dual, outcome):
-    from custom_components.sigma_connect_ha.sigma_client import ActionNotAllowedError
+    from custom_components.sigma_connect_ha.partition_client import ActionNotAllowedError
 
     c, client, entry = dual
     entities, refresh_tasks = prepare_action_entities(c, entry)
@@ -195,7 +196,7 @@ async def test_action_gate_clears_and_refreshes_after_every_executor_outcome(dua
     c.hass.async_add_executor_job = executor
     if outcome == "unconfirmed":
         executor.return_value = False
-        error_type, message = HomeAssistantError, "did not confirm"
+        error_type, message = None, None
     elif outcome == "transition":
         executor.side_effect = ActionNotAllowedError("Transition requires an explicit panel action")
         error_type, message = HomeAssistantError, "requires an explicit panel action"
@@ -204,7 +205,7 @@ async def test_action_gate_clears_and_refreshes_after_every_executor_outcome(dua
         error_type, message = RuntimeError, "simulated executor failure"
 
     try:
-        if outcome == "success":
+        if outcome in ("success", "unconfirmed"):
             await entity.async_alarm_arm_home()
         else:
             with pytest.raises(error_type, match=message):

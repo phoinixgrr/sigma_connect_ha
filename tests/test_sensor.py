@@ -5,8 +5,8 @@ import pytest
 from homeassistant.const import UnitOfElectricPotential
 from homeassistant.components.alarm_control_panel import AlarmControlPanelState
 
-from custom_components.sigma_connect_ha.sensor import SigmaSensor, async_setup_entry
-from custom_components.sigma_connect_ha.alarm_control_panel import SigmaAlarmPanel
+from custom_components.sigma_connect_ha.sensor import SigmaSensor, PartitionSensor, async_setup_entry
+from custom_components.sigma_connect_ha.alarm_control_panel import PartitionAlarmPanel as SigmaAlarmPanel
 from custom_components.sigma_connect_ha.const import DOMAIN
 
 
@@ -181,15 +181,15 @@ def test_missing_zones_hide_stale_zone_values_but_preserve_fresh_alarm_state(
             z[key] for z in partition_data(data, partition)["zones"] if z["zone"] == zid
         ))
         readers.append(reader)
-        zones.append(SigmaSensor(
+        zones.append(PartitionSensor(
             mock_coordinator, mock_config_entry, f"Zone {zid} {key}", reader,
             partition=partition, requires_zones=True,
         ))
-    status = SigmaSensor(
+    status = PartitionSensor(
         mock_coordinator, mock_config_entry, "Alarm Status",
         lambda data: partition_data(data, partition).get("status"), partition=partition,
     )
-    aggregate = SigmaSensor(
+    aggregate = PartitionSensor(
         mock_coordinator, mock_config_entry, "Zones Bypassed",
         lambda data: partition_data(data, partition).get("zones_bypassed"), partition=partition,
     )
@@ -283,7 +283,7 @@ def test_unavailable_partition_still_hides_all_its_entities(
             "zones": [{"zone": "21", "status": "Closed"}],
         },
     }
-    sensor = SigmaSensor(
+    sensor = PartitionSensor(
         mock_coordinator, mock_config_entry, "Alarm Status",
         lambda data: partition_data(data, partition).get("status"), partition=partition,
     )

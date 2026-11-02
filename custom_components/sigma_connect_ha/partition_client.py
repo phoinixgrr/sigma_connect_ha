@@ -5,14 +5,19 @@ import threading
 import unicodedata
 import logging
 import time
-import json
 from urllib.parse import urlsplit
 import requests
+import asyncio
+from bs4 import BeautifulSoup
+from . import sigma_client
 
-from .sigma_client import ActionNotAllowedError, SigmaClient
+from .sigma_client import SigmaClient
 
 _LOGGER = logging.getLogger(__name__)
-DIAGNOSTIC_BUILD = "1.2.5.post11"
+
+
+class ActionNotAllowedError(ValueError):
+    """The requested transition requires an explicit disarm first."""
 
 
 class MissingZonesError(ValueError):
@@ -36,153 +41,7 @@ class PartitionClient(SigmaClient):
         self._context = threading.local()
         self._active_partition = None
         self._paths = {}
-        self._diagnostic_times = {}
-        self._status_sequence = 0
-        self._status_counts = {}
-        self._status_summary_times = {}
-        self._status_suppressed = {}
 
-    def _diagnostic_phase(self, phase):
-        context = getattr(self._context, "status_diagnostic", None)
-        if context is not None:
-            context["phase"] = phase
-            # A failed request must never inherit a previous response's HTTP 200.
-            context["last_response"] = {}
-
-    def _diagnostic_increment(self, name):
-        context = getattr(self._context, "status_diagnostic", None)
-        if context is not None:
-            context[name] += 1
-
-    def _diagnostic_issue(self, reason):
-        context = getattr(self._context, "status_diagnostic", None)
-        if context is not None:
-            context["issues"].add(reason)
-
-    @staticmethod
-    def _exception_reason(error):
-        # Exception messages can contain credentials, addresses or URLs.
-        if isinstance(error, MissingZonesError):
-            return "missing_zones"
-        if isinstance(error, (SelectionSessionExpiredError, ZonesSessionExpiredError)):
-            return "session_expired"
-        if isinstance(error, requests.Timeout):
-            return "timeout"
-        if isinstance(error, requests.ConnectionError):
-            return "connection_error"
-        if isinstance(error, requests.RequestException):
-            return "request_error"
-        return "invalid_response" if isinstance(error, ValueError) else "unexpected_error"
-
-    def _diagnose_status_result(self, outcome, reason):
-        context = self._context.status_diagnostic
-        counts = self._status_counts[self.target_partition]
-        counts[outcome] += 1
-        key = (self.target_partition, outcome)
-        now = time.monotonic()
-        previous = self._status_summary_times.get(key)
-        if previous is not None and now - previous < 300:
-            self._status_suppressed[key] = self._status_suppressed.get(key, 0) + 1
-            return
-        self._status_summary_times[key] = now
-        summary = {
-            "build": DIAGNOSTIC_BUILD,
-            "operation_id": context["operation_id"],
-            "requested_partition": self.target_partition,
-            "outcome": outcome, "phase": context["phase"], "reason": reason,
-            "zones_reads": context["zones_reads"],
-            "selection_attempts": context["selection_attempts"],
-            "login_attempts": context["login_attempts"],
-            "zones_reconnects": context["zones_reconnects"],
-            "issues": sorted(context["issues"]),
-            "last_response": context["last_response"],
-            "total_status_reads": counts["reads"],
-            "total_recovered": counts["recovered"], "total_failed": counts["failed"],
-            "suppressed_summaries": self._status_suppressed.pop(key, 0),
-        }
-        # Visible with HA's default logging; rate-limited even for successful recovery.
-        _LOGGER.warning("SIGMA_STATUS %s", json.dumps(summary, ensure_ascii=True, sort_keys=True))
-
-    @staticmethod
-    def _page_kind(url):
-        """Only emit fixed page identifiers, never a host, query or arbitrary path."""
-        try:
-            page = urlsplit(str(url or "")).path.rsplit("/", 1)[-1].lower()
-        except ValueError:
-            return "other"
-        known = {"panel.html", "part.cgi", "zones.html", "login.html", "user.html",
-                 "access.html", "ucode", "arm", "arm.html", "disarm", "disarm.html",
-                 "stay", "stay.html"}
-        return page if page in known else "other"
-
-    @staticmethod
-    def _auth_form_kind(soup):
-        if not PartitionClient.is_login_page(soup):
-            return "none"
-        actions = {PartitionClient._page_kind(form.get("action", ""))
-                   for form in soup.find_all("form")}
-        if soup.find("input", {"name": "username"}) is not None:
-            return "web_login"
-        if "ucode" in actions:
-            return "pin"
-        return "auth_unknown"
-
-    def _response_soup(self, response):
-        soup = super()._response_soup(response)
-        history = getattr(response, "history", ()) or ()
-        soup.__dict__["_sigma_response_diagnostic"] = {
-            "final_page": self._page_kind(getattr(response, "url", "")),
-            "http_status": getattr(response, "status_code", None),
-            "redirects": len(history),
-            "redirect_pages": [self._page_kind(getattr(item, "url", "")) for item in history[:5]],
-            "response_chars": len(response.text),
-            "auth_form_kind": self._auth_form_kind(soup),
-            "form_actions": [self._page_kind(form.get("action", ""))
-                             for form in soup.find_all("form")[:5]],
-        }
-        context = getattr(self._context, "status_diagnostic", None)
-        if context is not None and context["phase"] in ("panel", "partition_selection", "zones"):
-            context["last_response"] = {
-                **soup.__dict__["_sigma_response_diagnostic"],
-                "returned_partition": self.partition_number(soup),
-                "login_token_present": self.is_login_page(soup),
-            }
-        return soup
-
-    def _diagnose_zones(self, soup, reason):
-        """Log structure only, at most once per reason/partition every five minutes."""
-        key = (self.target_partition, reason)
-        now = time.monotonic()
-        previous = self._diagnostic_times.get(key)
-        if previous is not None and now - previous < 300:
-            return
-        self._diagnostic_times[key] = now
-        tables = soup.find_all("table")
-        structure = []
-        for table in tables[:10]:
-            rows = table.find_all("tr")
-            counts = [len(row.find_all("td", recursive=False)) for row in rows]
-            structure.append({
-                "normaltable": "normaltable" in table.get("class", []),
-                "rows": len(rows), "header_cells": len(table.find_all("th")),
-                "rows_with_4plus_td": sum(count >= 4 for count in counts),
-                "td_per_row_first_12": counts[:12],
-            })
-        title = soup.title.get_text(" ", strip=True).lower() if soup.title else ""
-        title_kind = "zones" if "zone" in title else "panel" if "panel" in title else "login" if "login" in title else "other"
-        summary = {
-            "build": DIAGNOSTIC_BUILD, "reason": reason,
-            "requested_partition": self.target_partition,
-            "returned_partition": self.partition_number(soup),
-            "title_kind": title_kind, "login_token_present": self.is_login_page(soup),
-            "forms": len(soup.find_all("form")), "tables_total": len(tables),
-            "table_structure": structure,
-        }
-        context = getattr(self._context, "status_diagnostic", None)
-        if context is not None:
-            summary["operation_id"] = context["operation_id"]
-        summary.update(soup.__dict__.get("_sigma_response_diagnostic", {}))
-        _LOGGER.warning("SIGMA_DIAG %s", json.dumps(summary, ensure_ascii=True, sort_keys=True))
 
     @property
     def target_partition(self):
@@ -201,24 +60,15 @@ class PartitionClient(SigmaClient):
             self._context.partition = previous
 
     def logout(self):
-        self._diagnostic_phase("logout")
         self._active_partition = None
         super().logout()
 
     def login(self):
-        self._diagnostic_increment("login_attempts")
         self.pin = self.partition_pins[self.target_partition]
         self._active_partition = None
         super().login()
         self._active_partition = self.target_partition
 
-    def _submit_login(self):
-        self._diagnostic_phase("login")
-        return super()._submit_login()
-
-    def _submit_pin(self):
-        self._diagnostic_phase("pin")
-        return super()._submit_pin()
 
     @staticmethod
     def partition_number(soup):
@@ -237,12 +87,10 @@ class PartitionClient(SigmaClient):
             # Some Ixion versions accept ucode but keep the previous partition.
             self.logout()
             self.login()
-        self._diagnostic_phase("panel")
         panel = self._get_soup("panel.html")
         number = self.partition_number(panel)
         if number is not None:
             if number != self.target_partition:
-                self._diagnostic_phase("partition_selection")
                 selected = super().select_partition(self.target_partition)
                 selected_number = self.partition_number(selected)
                 if self.is_login_page(selected):
@@ -255,7 +103,6 @@ class PartitionClient(SigmaClient):
         if self.is_login_page(panel):
             raise SelectionSessionExpiredError("Ixion session expired")
         # Preserve the original explicit partition-selection flow on other firmware.
-        self._diagnostic_phase("partition_selection")
         selected = super().select_partition(self.target_partition)
         if self.is_login_page(selected):
             raise SelectionSessionExpiredError("Ixion session expired during partition selection")
@@ -267,24 +114,19 @@ class PartitionClient(SigmaClient):
     def select_partition(self, part_id=None):
         """Recover once from PIN rejection, expired sessions or wrong selection."""
         try:
-            self._diagnostic_increment("selection_attempts")
             return self._select_once()
         except Exception as error:
-            self._diagnostic_issue(self._exception_reason(error))
             self.logout()
             self.login()
-            self._diagnostic_increment("selection_attempts")
             return self._select_once()
 
     def parse_zones_html(self, soup):
         # Validate the authoritative zones page even when selection pages lack a header.
         if self.partition_number(soup) != self.target_partition:
-            self._diagnose_zones(soup, "wrong_partition")
             raise ValueError(f"Status page did not confirm partition {self.target_partition}")
         try:
             data = super().parse_zones_html(soup)
         except Exception:
-            self._diagnose_zones(soup, "parse_error")
             raise
         if data.get("battery_volt") is None:
             match = re.search(r"Μπαταρία\s*:\s*([\d.,]+)\s*Volt", soup.get_text(" ", strip=True), re.I)
@@ -293,10 +135,8 @@ class PartitionClient(SigmaClient):
         try:
             self.validate_status(data)
         except MissingZonesError:
-            self._diagnose_zones(soup, "missing_zones")
             raise
         except ValueError:
-            self._diagnose_zones(soup, "unknown_status")
             raise
         return data
 
@@ -363,11 +203,8 @@ class PartitionClient(SigmaClient):
         time.sleep(1.0)
         for attempt in range(3):
             try:
-                self._diagnostic_phase("zones")
-                self._diagnostic_increment("zones_reads")
                 soup = self._get_soup("zones.html")
                 if self.is_login_page(soup):
-                    self._diagnose_zones(soup, "zones_session_expired")
                     raise ZonesSessionExpiredError("Ixion session expired while reading zones")
                 # Every response still has to confirm the target partition.
                 data = self.parse_zones_html(soup)
@@ -376,7 +213,6 @@ class PartitionClient(SigmaClient):
                                   self.target_partition, attempt + 1)
                 return data
             except MissingZonesError:
-                self._diagnostic_issue("missing_zones")
                 if attempt == 2:
                     raise
                 _LOGGER.debug("Partition %s returned no zones; rereading only zones.html (%s/3)",
@@ -390,60 +226,22 @@ class PartitionClient(SigmaClient):
                 self.select_partition()
                 return self._read_selected_zones()
             except (MissingZonesError, ZonesSessionExpiredError, requests.RequestException) as error:
-                self._diagnostic_issue(self._exception_reason(error))
                 if recovery:
                     raise
                 _LOGGER.debug("Partition %s: one fresh login before final zones-read batch",
                               self.target_partition)
-                self._diagnostic_increment("zones_reconnects")
                 self.logout()
                 self.login()
 
-    def safe_get_partition_status(self, partition):
-        with self.partition_scope(partition):
-            previous = getattr(self._context, "status_diagnostic", None)
-            self._status_sequence += 1
-            counts = self._status_counts.setdefault(self.target_partition,
-                {"reads": 0, "recovered": 0, "failed": 0, "previous_failed": False})
-            counts["reads"] += 1
-            self._context.status_diagnostic = {
-                "operation_id": self._status_sequence, "phase": "start",
-                "zones_reads": 0, "selection_attempts": 0, "login_attempts": 0,
-                "zones_reconnects": 0, "issues": set(), "last_response": {},
-            }
-            try:
-                # Upstream still sends allowlisted analytics after a successful read.
-                # try_zones_directly owns recovery and never returns None.
-                data = super().safe_get_status()
-            except Exception as error:
-                reason = self._exception_reason(error)
-                self._diagnostic_issue(reason)
-                counts["previous_failed"] = True
-                self._diagnose_status_result("failed", reason)
-                raise
-            else:
-                context = self._context.status_diagnostic
-                if counts["previous_failed"]:
-                    context["issues"].add("previous_read_failed")
-                if context["issues"]:
-                    reason = "retry_succeeded" if context["issues"] != {"previous_read_failed"} else "subsequent_read_succeeded"
-                    self._diagnose_status_result("recovered", reason)
-                counts["previous_failed"] = False
-                return data
-            finally:
-                self._context.status_diagnostic = previous
 
     def _parse_control_status(self, soup, zones_page=False):
         """Require a fresh target/state, independently of the zone table's readiness."""
         if self.is_login_page(soup):
-            self._diagnose_zones(soup, "control_auth_required")
             raise SelectionSessionExpiredError("Ixion requested authentication for control state")
         if self.partition_number(soup) != self.target_partition:
-            self._diagnose_zones(soup, "control_wrong_partition")
             raise ValueError(f"Control page did not confirm partition {self.target_partition}")
         data = SigmaClient.parse_zones_html(self, soup)
         if self.parse_alarm_status(data.get("alarm_status"))[0] is None:
-            self._diagnose_zones(soup, "control_unknown_status")
             raise ValueError("Control page returned an unrecognized alarm state")
         # Tables on panel/access pages cannot establish fresh zone measurements.
         if not zones_page:
@@ -482,7 +280,7 @@ class PartitionClient(SigmaClient):
             data = self._parse_control_status(self._get_soup("zones.html"), zones_page=True)
         if action is not None:
             self._validate_action_state(action, data)
-        paths = super()._action_paths()
+        paths = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
         if direct:
             # Known PIN-scoped Aeolus firmware uses extensionless control paths.
             paths = {action: action for action in paths}
@@ -500,8 +298,8 @@ class PartitionClient(SigmaClient):
 
     def perform_partition_action(self, action, partition):
         with self.partition_scope(partition):
-            # perform_action owns the shared lock, retries, re-authentication and polls.
-            return super().perform_action(action)
+            # The optional action flow owns the shared lock, retries and polls.
+            return self.perform_action(action)
 
     def _publish_action_data(self, data):
         data = dict(data)
@@ -513,3 +311,158 @@ class PartitionClient(SigmaClient):
         self.coordinator.hass.loop.call_soon_threadsafe(
             self.coordinator.async_set_partition_data, partition, data
         )
+
+    @sigma_client.retry_html_request
+    def _get_soup(self, path):
+        response = self.session.get(f"{self.base_url}/{path.lstrip('/')}", timeout=5)
+        response.raise_for_status()
+        return self._response_soup(response)
+
+    def _response_soup(self, response):
+        return BeautifulSoup(response.text, "html.parser")
+
+    def safe_get_partition_status(self, partition):
+        with self.partition_scope(partition):
+            return super().safe_get_status()
+
+    def _publish_action_status(self, raw):
+        parsed, bypass = self.parse_alarm_status(raw.get("alarm_status"))
+        self._publish_action_data({
+            "status": parsed, "zones_bypassed": bypass,
+            "battery_volt": raw.get("battery_volt"), "ac_power": raw.get("ac_power"),
+            "zones": [{**zone, "status": self._to_openclosed(zone.get("status")),
+                       "bypass": self._to_bool(zone.get("bypass"))}
+                      for zone in raw.get("zones", [])],
+        })
+
+    def perform_action(self, action: str) -> bool:
+        action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
+        desired_map = {"arm": "Armed", "disarm": "Disarmed", "stay": "Armed Perimeter"}
+
+        if action not in action_map:
+            _LOGGER.error("Invalid action %r", action)
+            return False
+
+        _LOGGER.debug(f"[LOCK] Waiting to perform '{action}'")
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._acquire_action_lock(),
+                self.coordinator.hass.loop
+            ).result()
+        except TimeoutError:
+            _LOGGER.error("[ACTION] Timed out waiting for lock after %ss, aborting '%s'", self.ACTION_LOCK_TIMEOUT, action)
+            return False
+        except Exception as exc:
+            _LOGGER.error("[ACTION] Failed to acquire lock for '%s': %s", action, exc)
+            return False
+        _LOGGER.debug(f"[LOCK] Acquired for '{action}'")
+
+        try:
+            # Brief delay to let panel settle after any recent coordinator activity
+            time.sleep(0.25)
+
+            desired = desired_map[action]
+
+            # 1) If already desired, exit fast (non-fatal if check fails)
+            current_status = None
+            try:
+                initial_data = self._read_action_status()
+                self._validate_action_state(action, initial_data)
+                current_status, _ = self.parse_alarm_status(initial_data.get("alarm_status"))
+                _LOGGER.debug(f"[ACTION] Current status before '{action}': {current_status}")
+                if current_status == desired:
+                    _LOGGER.info(f"[ACTION] Alarm already in desired state ({desired})")
+                    self._publish_already_desired_status(initial_data)
+                    return True
+            except ActionNotAllowedError:
+                raise
+            except Exception as exc:
+                _LOGGER.warning("[ACTION] Initial status check failed, proceeding to action: %s", exc)
+
+            # 2) Try action with retries
+            last_seen_state = current_status
+            last_raw_status = None
+            total_polls = 0
+
+            for attempt in range(1, sigma_client.MAX_ACTION_ATTEMPTS + 1):
+                try:
+                    # Re-login on retry to get a fresh session
+                    if attempt > 1:
+                        _LOGGER.info("[ACTION] Re-authenticating before attempt %d", attempt)
+                        self.logout()
+                        self.login()
+
+                    # Preparation validates the selected partition immediately before triggering.
+                    action_map = self._prepare_action(action)
+
+                    # Trigger action
+                    _LOGGER.debug(f"[ACTION] Attempt {attempt}/{sigma_client.MAX_ACTION_ATTEMPTS} - Triggering '{action}' on panel.")
+                    action_resp = self.session.get(
+                        f"{self.base_url}/{action_map[action]}",
+                        headers={"Referer": f"{self.base_url}/part.cgi"},
+                        timeout=5,
+                    )
+                    action_resp.raise_for_status()
+
+                    # Detect session expiration from response
+                    if "gen_input" in action_resp.text or "login" in action_resp.url:
+                        _LOGGER.warning("[ACTION] Session expired on attempt %d, re-authenticating", attempt)
+                        _LOGGER.debug("[ACTION-DIAG] Expired response snippet: %.500s", action_resp.text[:500])
+                        self.logout()
+                        self.login()
+                        action_map = self._prepare_action(action)
+                        action_resp = self.session.get(
+                            f"{self.base_url}/{action_map[action]}",
+                            headers={"Referer": f"{self.base_url}/part.cgi"},
+                            timeout=5,
+                        )
+                        action_resp.raise_for_status()
+
+                    _LOGGER.debug("[ACTION-DIAG] Response status code: %d", action_resp.status_code)
+                    _LOGGER.debug("[ACTION-DIAG] Final URL (after redirects): %s", action_resp.url)
+                    _LOGGER.debug("[ACTION-DIAG] Response snippet: %.500s", action_resp.text[:500])
+                except ActionNotAllowedError:
+                    raise
+                except Exception as exc:
+                    _LOGGER.warning("[ACTION] Attempt %d trigger failed: %s", attempt, exc)
+                    if attempt < sigma_client.MAX_ACTION_ATTEMPTS:
+                        time.sleep(0.5)
+                        continue
+                    break
+
+                # Poll for state change (limited polls per attempt)
+                for poll in range(1, self.POLLS_PER_ATTEMPT + 1):
+                    total_polls += 1
+                    try:
+                        parsed_zones = self._read_action_status()
+                        raw_alarm_status = parsed_zones.get("alarm_status")
+                        new_state, _ = self.parse_alarm_status(raw_alarm_status)
+                        last_seen_state = new_state
+                        last_raw_status = raw_alarm_status
+
+                        _LOGGER.debug(f"[ACTION] Attempt {attempt}, Poll {poll} - Status: {new_state}")
+
+                        if new_state == desired:
+                            _LOGGER.info(f"[ACTION SUCCESS] '{action}' reached {desired} (attempt {attempt}, poll {poll})")
+
+                            # Use the validated read, including header-only optional control state.
+                            self._publish_action_status(parsed_zones)
+
+                            return True
+                    except Exception as e:
+                        _LOGGER.debug("[ACTION] Poll error (will retry): %s", e)
+
+                    time.sleep(0.5)
+
+                # State didn't change after POLLS_PER_ATTEMPT polls
+                if attempt < sigma_client.MAX_ACTION_ATTEMPTS:
+                    _LOGGER.warning(f"[ACTION] Attempt {attempt} failed, state still '{last_seen_state}', retrying...")
+                    time.sleep(0.5)  # Brief pause before retry
+
+            _LOGGER.error(f"[ACTION FAILED] '{action}' did not reach '{desired}' after {sigma_client.MAX_ACTION_ATTEMPTS} attempts")
+            _LOGGER.error(f"[ACTION-DIAG] FAILURE SUMMARY: last_seen_state='{last_seen_state}', last_raw_status='{last_raw_status}', total_polls={total_polls}")
+            return False
+
+        finally:
+            self.coordinator.hass.loop.call_soon_threadsafe(self.coordinator.lock.release)
+            _LOGGER.debug(f"[LOCK] Released for '{action}'")
