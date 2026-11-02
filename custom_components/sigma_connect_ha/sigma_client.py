@@ -373,6 +373,14 @@ class SigmaClient:
 
     # Polls per attempt before re-triggering action
     POLLS_PER_ATTEMPT = 5
+    ACTION_LOCK_TIMEOUT = 60
+
+    async def _acquire_action_lock(self):
+        # The loop must cancel a timed-out waiter before the worker returns.
+        # A timeout on Future.result() alone leaves the acquisition queued.
+        await asyncio.wait_for(
+            self.coordinator.lock.acquire(), timeout=self.ACTION_LOCK_TIMEOUT
+        )
 
     def perform_action(self, action: str) -> bool:
         action_map = {"arm": "arm.html", "disarm": "disarm.html", "stay": "stay.html"}
@@ -385,9 +393,9 @@ class SigmaClient:
         logger.debug(f"[LOCK] Waiting to perform '{action}'")
         try:
             asyncio.run_coroutine_threadsafe(
-                self.coordinator.lock.acquire(),
+                self._acquire_action_lock(),
                 self.coordinator.hass.loop
-            ).result(timeout=60)
+            ).result()
         except TimeoutError:
             logger.error("[ACTION] Timed out waiting for lock after 60s, aborting '%s'", action)
             return False
