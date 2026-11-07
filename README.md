@@ -184,3 +184,42 @@ Disable it anytime from the "Enable analytics reporting" option in settings.
 If you find this project helpful and want to support my work, feel free to donate via PayPal:
 
 [https://paypal.me/amaziotis](https://paypal.me/amaziotis)
+
+## Two PIN-scoped partitions (Aeolus / Ixion)
+
+Set the optional Partition 2 PIN to enable a separate alarm entity and zone
+status/bypass sensors. Leave it empty to retain the original single-PIN client.
+Existing partition 1 entity IDs are preserved. Two-PIN entries enforce a minimum polling interval of 60 seconds; existing one-PIN intervals are unchanged.
+
+The optional client serializes access through one session, authenticates with the
+requested PIN, verifies partition identity, and preserves the upstream action retry
+and confirmation sequence in the optional client. A fully armed partition cannot be changed directly to
+perimeter mode; disarming remains an explicit user action.
+
+Alarm-state confirmation is separate from zone-table readiness. After control,
+zone entities may briefly be unavailable until a complete zones read succeeds;
+missing data is not reported as closed zones. Failed reads use the existing
+failure grace period. The next successful complete read restores zone entities.
+
+The analytics setting remains available and uses the upstream settings allowlist;
+partition PINs are excluded from that payload.
+
+### Test status (October 31, 2026)
+
+The user reports generally good daily operation on Aeolus 11.7 / Ixion 1.4.0,
+Home Assistant Core 2026.10.1, two PINs, and wired Ethernet to the router.
+Command delays of a few seconds are acceptable; transient unavailability after
+actions recovers in about five seconds. Intermittent session expiration, timeouts,
+and empty zone tables remain in the logs, including some failed reads.
+This is a test version, not a claim of full stability or other-firmware validation.
+Triggered-state detection is not added.
+
+The lock timeout fix is reviewed separately in [PR #7](https://github.com/phoinixgrr/sigma_connect_ha/pull/7). The optional client contains the two-PIN control flow; the original one-PIN entity queues overlapping commands as before. Only two-PIN entries reject overlapping service calls while an action runs. Unconfirmed actions retain the original client behavior: log failure and refresh the real state, without converting False into a service exception. A prohibited full-to-perimeter transition still raises an explicit error.
+
+Temporary SIGMA_STATUS/SIGMA_DIAG warning diagnostics and their build identifier have been removed. The manifest is unchanged from upstream; release versioning remains controlled by tags.
+
+All 187 local regression tests pass on Windows/Python 3.12 with Home Assistant 2024.3.3
+and the repository compatibility setup. Existing AsyncMock/task-cleanup warnings remain in the
+test scaffolding. Tests use synthetic responses, not private installation HTML.
+Run the complete suite with `pytest tests/`; standalone protocol tests also run
+with `python tests/standalone/test_partition_protocol.py`.

@@ -10,6 +10,8 @@ from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 
 from .const import (
     DOMAIN,
+    CONF_PARTITION_2_PIN,
+    MIN_PARTITION_UPDATE_INTERVAL,
     CONF_PIN,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
@@ -29,6 +31,8 @@ from .const import (
     DEFAULT_ENABLE_ANALYTICS,
 )
 from . import sigma_client
+from .partition_client import PartitionClient
+from homeassistant.core import callback
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,11 +80,16 @@ class SigmaCoordinator(DataUpdateCoordinator):
         )
 
         interval = opts.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        second_pin = opts.get(CONF_PARTITION_2_PIN, entry.data.get(CONF_PARTITION_2_PIN, "")).strip()
+        if second_pin:
+            interval = max(interval, MIN_PARTITION_UPDATE_INTERVAL)
         update_interval = timedelta(seconds=interval)
 
         # Locks: one for polling, one to serialize actions
         self._poll_lock = asyncio.Lock()
         self.lock = asyncio.Lock()
+        self._action_in_progress = False
+        self._action_task = None
 
         super().__init__(
             hass,
@@ -98,6 +107,17 @@ class SigmaCoordinator(DataUpdateCoordinator):
             coordinator=self,
             send_analytics=opts.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
         )
+        self.partition_ids = ("1",)
+        self._partition_failures = {"1": 0, "2": 0}
+        if second_pin:
+            self.client.session.close()
+            self.client = PartitionClient(
+                f"http://{base}:5053", entry.data[CONF_USERNAME],
+                entry.data[CONF_PASSWORD], pin, coordinator=self,
+                send_analytics=opts.get(CONF_ENABLE_ANALYTICS, DEFAULT_ENABLE_ANALYTICS),
+                second_pin=second_pin,
+            )
+            self.partition_ids = ("1", "2")
         self.client._config.update(entry.options)
 
     async def _async_update_data(self):
@@ -144,6 +164,8 @@ class SigmaCoordinator(DataUpdateCoordinator):
         raise UpdateFailed("All fetch attempts failed")
 
     def _fetch(self):
+        if len(self.partition_ids) == 2:
+            return self._fetch_partitions()
         data = self.client.safe_get_status()
         parsed, bypass = self.client.parse_alarm_status(data.get("alarm_status"))
         if not parsed or data.get("battery_volt") is None or not data.get("zones"):
@@ -163,3 +185,58 @@ class SigmaCoordinator(DataUpdateCoordinator):
                 for z in data["zones"]
             ],
         }
+
+    def _fetch_partitions(self):
+        results = {}
+        # Begin with the currently selected partition: only one PIN switch per poll.
+        order = list(self.partition_ids)
+        if self.client._active_partition == "2":
+            order.reverse()
+        for partition in order:
+            try:
+                raw = self.client.safe_get_partition_status(partition)
+                parsed, bypass = self.client.parse_alarm_status(raw.get("alarm_status"))
+                if parsed is None or not raw.get("zones"):
+                    missing = [name for name, valid in (
+                        ("alarm_status", parsed is not None), ("zones", bool(raw.get("zones")))
+                    ) if not valid]
+                    raise ValueError(f"Invalid fields {','.join(missing)}; alarm_status={str(raw.get('alarm_status'))[:100]!r}")
+                bypass = PartitionClient.resolve_bypass(parsed, bypass, raw["zones"])
+                results[partition] = {
+                    "status": parsed, "zones_bypassed": bypass, "zones_available": True,
+                    "battery_volt": raw["battery_volt"], "ac_power": raw.get("ac_power"),
+                    "zones": [{**z, "status": self.client._to_openclosed(z["status"]),
+                               "bypass": self.client._to_bool(z["bypass"])} for z in raw["zones"]],
+                }
+                self._partition_failures[partition] = 0
+            except Exception as err:
+                self._partition_failures[partition] += 1
+                _LOGGER.warning("Partition %s status failed (%s/%s): %s",
+                    partition, self._partition_failures[partition], self.max_consecutive_failures, err)
+                previous = self._last_data or {}
+                if partition == "2":
+                    previous = previous.get("partition_2") or {}
+                # Initial failure retries setup; later failures have the upstream grace period.
+                if not previous:
+                    raise
+                if self._partition_failures[partition] < self.max_consecutive_failures:
+                    results[partition] = previous
+                else:
+                    results[partition] = {"zones": previous.get("zones", []), "available": False}
+        first = dict(results["1"])
+        first["partition_2"] = dict(results["2"])
+        return first
+
+    @callback
+    def async_set_partition_data(self, partition, data):
+        merged = dict(self.data or {})
+        if partition == "1":
+            second = merged.get("partition_2")
+            merged = dict(data)
+            if second is not None:
+                merged["partition_2"] = second
+        else:
+            merged["partition_2"] = data
+        self._partition_failures[partition] = 0
+        self._last_data = merged
+        self.async_set_updated_data(merged)

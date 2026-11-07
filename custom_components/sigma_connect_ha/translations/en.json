@@ -9,7 +9,8 @@
           "host": "IP Address",
           "username": "Username",
           "password": "Web Interface Password",
-          "pin": "Alarm PIN (Keypad Code)"
+          "pin": "Alarm PIN (Keypad Code)",
+          "partition_2_pin": "Partition 2 PIN (leave empty to disable)"
         }
       }
     },
@@ -28,7 +29,8 @@
         "data": {
           "pin": "Alarm PIN (Keypad Code)",
           "update_interval": "Status Check Interval (seconds)",
-          "enable_analytics": "Send Anonymous Usage Statistics"
+          "enable_analytics": "Send Anonymous Usage Statistics",
+          "partition_2_pin": "Partition 2 PIN (leave empty to disable)"
         }
       }
     }
