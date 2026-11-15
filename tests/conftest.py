@@ -1,5 +1,6 @@
 """Shared fixtures for sigma_connect_ha tests."""
 import asyncio
+import time
 from unittest.mock import MagicMock, AsyncMock, patch
 from enum import Enum
 import pytest
@@ -225,3 +226,60 @@ def mock_sigma_client(mock_coordinator):
             send_analytics=False,
         )
         return client
+
+
+# ---------------------------------------------------------------------------
+# Simulated panel (tests/simulator)
+# ---------------------------------------------------------------------------
+
+class _NoSleepTime:
+    """The time module without the waiting, so retries and backoff run instantly."""
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+    @staticmethod
+    def sleep(_seconds):
+        return None
+
+
+@pytest.fixture
+def sim_panel_factory(monkeypatch):
+    """Start simulated panels: ``sim_panel_factory(mode="pin_scoped")``."""
+    from custom_components.sigma_connect_ha import coordinator as coordinator_module
+    from custom_components.sigma_connect_ha import sigma_client
+    from tests.simulator import FakePanel
+
+    monkeypatch.setattr(
+        "homeassistant.helpers.frame.report_usage", lambda *a, **k: None, raising=False
+    )
+    modules = [sigma_client, coordinator_module]
+    try:
+        from custom_components.sigma_connect_ha import partition_client
+        modules.append(partition_client)
+    except ImportError:
+        pass
+    for module in modules:
+        monkeypatch.setattr(module, "time", _NoSleepTime())
+    # The coordinator writes these module globals from the options; restore them afterwards.
+    for name in ("RETRY_TOTAL", "RETRY_BACKOFF_FACTOR", "RETRY_ATTEMPTS_FOR_HTML", "MAX_ACTION_ATTEMPTS"):
+        monkeypatch.setattr(sigma_client, name, getattr(sigma_client, name))
+
+    panels = []
+
+    def make(**kwargs):
+        panel = FakePanel(**kwargs).start()
+        panels.append(panel)
+        # Analytics go to the simulator, never to the real endpoint.
+        monkeypatch.setattr(sigma_client, "ANALYTICS_ENDPOINT", f"{panel.url}/analytics")
+        return panel
+
+    yield make
+    for panel in panels:
+        panel.stop()
+
+
+@pytest.fixture
+def sim_panel(sim_panel_factory):
+    """A single-partition simulated panel (classic Ixion, PIN 1234)."""
+    return sim_panel_factory()

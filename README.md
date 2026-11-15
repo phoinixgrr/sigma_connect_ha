@@ -179,6 +179,50 @@ It’s a little nod to the timing of the project and a reminder that tech and tr
 This integration can optionally send a one-time anonymous report with basic system and config info (no personal data) to help improve the integration.
 Disable it anytime from the "Enable analytics reporting" option in settings.
 
+## Development & Testing
+
+### Running the tests
+
+Requires Python 3.11 or newer.
+
+```bash
+pip install -r requirements_test.txt
+pytest tests/
+```
+
+### Simulated panel
+
+`tests/simulator` contains a fake Sigma panel that runs on your machine over HTTP. It mimics what the integration relies on: the one-time login token with the encrypted password and PIN, the `SID` session cookie, one active session at a time, the status and zone pages, and the arm, disarm and stay endpoints. It has two styles:
+
+- `classic`: one PIN, partitions selected through `part.cgi`.
+- `pin_scoped`: one PIN per partition (Aeolus style).
+
+The end-to-end tests run the real coordinator, client, sensors and alarm entities against it:
+
+- `tests/test_simulated_single_pin.py` records the exact requests and entities of a single-partition setup. If a change makes one of these tests fail, it changes behaviour for single-partition users, so make sure that's intended.
+- `tests/test_simulated_two_pin.py` covers two-partition (two PIN) setups.
+
+```bash
+pytest tests/test_simulated_single_pin.py tests/test_simulated_two_pin.py -v
+```
+
+The simulator's pages are synthetic: they follow what the integration's parsers expect, not pages captured from real firmware. Passing tests mean the integration's logic is right, not that a specific panel or firmware version works.
+
+### Trying the integration without a panel
+
+```bash
+python -m tests.simulator                    # one partition, PIN 1234
+python -m tests.simulator --mode pin_scoped  # two partitions, PINs 1234 and 5678
+```
+
+Add the integration in a development Home Assistant using the IP address of the machine running the simulator, username `admin`, password `secret` and PIN `1234` (and Partition 2 PIN `5678` for two partitions). The integration always connects to port 5053, so keep the default port. Anonymous analytics are on by default; turn them off in the integration options if you don't want test runs counted.
+
+At the simulator's prompt you can change things as if from the keypad (`arm 1`, `open 1 2`), end the session (`expire`), or cause faults (`empty 2` for an empty zone table, `ignore 1` to ignore the next command, `fail zones.html 3` for HTTP 500s). `status` shows the current state.
+
+### Reproducing a bug
+
+`FakePanel` has switches for common failures: `expire_sessions()`, `empty_zones`, `ignore_commands`, `fail_requests` and `holding_commands()` (a slow panel). Use them to turn a reported problem into a test; the existing simulator tests show how.
+
 ## ☕ Support My Work
 
 If you find this project helpful and want to support my work, feel free to donate via PayPal:
