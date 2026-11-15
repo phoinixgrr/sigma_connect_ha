@@ -9,10 +9,10 @@ on:
 jobs:
   hacs:
     name: HACS Action
-    runs-on: "ubuntu-latest"
+    runs-on: "ubuntu-24.04"
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: HACS Validation
         uses: hacs/action@main
