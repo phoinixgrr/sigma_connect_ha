@@ -51,8 +51,8 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
    - Alarm Panel IP address
    - Username
    - Password
-   - Alarm PIN (keypad code), if different from the password
-   - Partition 2 PIN, only for a second partition (see [Two Partitions](#two-partitions))
+   - Alarm PIN – Partition 1 (keypad code), if different from the password
+   - Alarm PIN – Partition 2, only for a second partition (see [Two Partitions](#two-partitions))
 
 ## Settings
 
@@ -62,16 +62,16 @@ After adding the integration, you can go to **Settings → Devices & Services �
 
 | Option                   | Default | Description                                                 |
 |--------------------------|:-------:|-------------------------------------------------------------|
-| **Alarm PIN**            | —       | Keypad code (if different from web password)                |
-| **Partition 2 PIN**      | —       | Keypad code of a second partition. Leave empty for one partition |
-| **Polling Interval**     | 10 s    | How often Home Assistant checks the panel status (at least 60 s with a Partition 2 PIN) |
+| **Alarm PIN – Partition 1** | —    | Keypad code (if different from web password)                |
+| **Alarm PIN – Partition 2** | —    | Keypad code of a second partition. Leave empty for one partition |
+| **Polling Interval**     | 10 s    | How often Home Assistant checks the panel status (at least 60 s with a second partition) |
 | **Send Analytics**       | On      | Send anonymous usage statistics to help improve the integration |
 
 > **Note:** A restart of Home Assistant is required for changes to take effect.
 
 ## Two Partitions
 
-For panels where each partition has its own PIN, such as AEOLUS with the Ixion module. Enter the second partition's PIN as **Partition 2 PIN**, during setup or under **Configure**, and restart Home Assistant.
+For panels where each partition has its own PIN, such as AEOLUS with the Ixion module. Enter the second partition's PIN as **Alarm PIN – Partition 2**, during setup or under **Configure**, and restart Home Assistant.
 
 This adds:
 
@@ -241,7 +241,7 @@ python -m tests.simulator                    # one partition, PIN 1234
 python -m tests.simulator --mode pin_scoped  # two partitions, PINs 1234 and 5678
 ```
 
-Add the integration in a development Home Assistant using the IP address of the machine running the simulator, username `admin`, password `secret` and PIN `1234` (and Partition 2 PIN `5678` for two partitions). The integration always connects to port 5053, so keep the default port. Anonymous analytics are on by default; turn them off in the integration options if you don't want test runs counted.
+Add the integration in a development Home Assistant using the IP address of the machine running the simulator, username `admin`, password `secret` and PIN `1234` (and `5678` as Alarm PIN – Partition 2 for two partitions). The integration always connects to port 5053, so keep the default port. Anonymous analytics are on by default; turn them off in the integration options if you don't want test runs counted.
 
 At the simulator's prompt you can change things as if from the keypad (`arm 1`, `open 1 2`), end the session (`expire`), or cause faults (`empty 2` for an empty zone table, `ignore 1` to ignore the next command, `fail zones.html 3` for HTTP 500s). `status` shows the current state.
 

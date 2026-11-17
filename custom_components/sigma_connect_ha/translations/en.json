@@ -9,8 +9,8 @@
           "host": "IP Address",
           "username": "Username",
           "password": "Web Interface Password",
-          "pin": "Alarm PIN (Keypad Code)",
-          "partition_2_pin": "Partition 2 PIN (Keypad Code)"
+          "pin": "Alarm PIN – Partition 1",
+          "partition_2_pin": "Alarm PIN – Partition 2"
         },
         "data_description": {
           "partition_2_pin": "Optional. Leave empty if your panel has one partition."
@@ -30,10 +30,10 @@
         "title": "Settings",
         "description": "Configure your Sigma Alarm integration.",
         "data": {
-          "pin": "Alarm PIN (Keypad Code)",
+          "pin": "Alarm PIN – Partition 1",
           "update_interval": "Status Check Interval (seconds)",
           "enable_analytics": "Send Anonymous Usage Statistics",
-          "partition_2_pin": "Partition 2 PIN (Keypad Code)"
+          "partition_2_pin": "Alarm PIN – Partition 2"
         },
         "data_description": {
           "partition_2_pin": "Optional. Leave empty if your panel has one partition."
