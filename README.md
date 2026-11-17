@@ -58,6 +58,8 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
 
 After adding the integration, you can go to **Settings → Devices & Services → Sigma Alarm → Configure** to adjust:
 
+<img src="./images/settings.png" alt="Sigma Alarm settings dialog" width="450">
+
 | Option                   | Default | Description                                                 |
 |--------------------------|:-------:|-------------------------------------------------------------|
 | **Alarm PIN**            | —       | Keypad code (if different from web password)                |

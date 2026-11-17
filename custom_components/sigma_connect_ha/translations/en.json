@@ -10,7 +10,10 @@
           "username": "Username",
           "password": "Web Interface Password",
           "pin": "Alarm PIN (Keypad Code)",
-          "partition_2_pin": "Partition 2 PIN (leave empty to disable)"
+          "partition_2_pin": "Partition 2 PIN (Keypad Code)"
+        },
+        "data_description": {
+          "partition_2_pin": "Optional. Leave empty if your panel has one partition."
         }
       }
     },
@@ -30,7 +33,10 @@
           "pin": "Alarm PIN (Keypad Code)",
           "update_interval": "Status Check Interval (seconds)",
           "enable_analytics": "Send Anonymous Usage Statistics",
-          "partition_2_pin": "Partition 2 PIN (leave empty to disable)"
+          "partition_2_pin": "Partition 2 PIN (Keypad Code)"
+        },
+        "data_description": {
+          "partition_2_pin": "Optional. Leave empty if your panel has one partition."
         }
       }
     }
