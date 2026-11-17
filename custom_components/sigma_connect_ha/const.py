@@ -23,3 +23,6 @@ DEFAULT_MAX_TOTAL_ATTEMPTS = 3          # Coordinator fetch retry attempts
 DEFAULT_MAX_ACTION_ATTEMPTS = 5         # Attempts for arm/disarm/stay actions
 DEFAULT_MAX_CONSECUTIVE_FAILURES = 3    # Number of consecutive polling failures before marking data unavailable
 DEFAULT_ENABLE_ANALYTICS = True
+
+CONF_PARTITION_2_PIN = "partition_2_pin"
+MIN_PARTITION_UPDATE_INTERVAL = 60.0
