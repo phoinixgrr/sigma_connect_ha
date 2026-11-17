@@ -23,6 +23,7 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
 - **Bypassed zones**: Clearly indicates which zones are bypassed
 - **Zone sensors**: Open/Closed state per zone + bypass state
 - **Battery voltage** and **AC power** monitoring
+- **Two partitions (optional)**: a second alarm entity and zone sensors for panels with a PIN per partition
 
 -![Demo HA Integration](./images/demo.png "Sigma Alarm Demo HA Integration")
 
@@ -50,6 +51,8 @@ It communicates with the alarm panel through HTTP requests and HTML parsing (web
    - Alarm Panel IP address
    - Username
    - Password
+   - Alarm PIN (keypad code), if different from the password
+   - Partition 2 PIN, only for a second partition (see [Two Partitions](#two-partitions))
 
 ## Settings
 
@@ -58,10 +61,29 @@ After adding the integration, you can go to **Settings → Devices & Services �
 | Option                   | Default | Description                                                 |
 |--------------------------|:-------:|-------------------------------------------------------------|
 | **Alarm PIN**            | —       | Keypad code (if different from web password)                |
-| **Polling Interval**     | 10 s    | How often Home Assistant checks the panel status            |
+| **Partition 2 PIN**      | —       | Keypad code of a second partition. Leave empty for one partition |
+| **Polling Interval**     | 10 s    | How often Home Assistant checks the panel status (at least 60 s with a Partition 2 PIN) |
 | **Send Analytics**       | On      | Send anonymous usage statistics to help improve the integration |
 
 > **Note:** A restart of Home Assistant is required for changes to take effect.
+
+## Two Partitions
+
+For panels where each partition has its own PIN, such as AEOLUS with the Ixion module. Enter the second partition's PIN as **Partition 2 PIN**, during setup or under **Configure**, and restart Home Assistant.
+
+This adds:
+
+- **Sigma Alarm Partition 2**: a second alarm entity, armed and disarmed independently of partition 1
+- Partition 2 alarm status, bypassed zones, and zone status and bypass sensors
+
+Battery voltage and AC power belong to the whole panel, so they stay single sensors. Partition 1 keeps its existing entities and entity IDs. With the field empty, nothing changes.
+
+Good to know:
+
+- The polling interval is at least 60 seconds, because each check reads both partitions.
+- Commands queue, so one automation can arm or disarm both partitions at once.
+- A fully armed partition can't switch straight to perimeter mode. Disarm it first.
+- Right after a command, zone sensors can show as unavailable for a few seconds until the next full read.
 
 
 ## How It Works
@@ -87,6 +109,8 @@ We reverse-engineered the web interface used by the alarm's IP module:
   - **S-PRO 32**
 - Tested with **Axion v1.4.0** and:
   - **S-PRO 64**
+- Two partitions tested with **Ixion v1.4.0** and:
+  - **AEOLUS v11.7**
 - ⚠️ No guarantees for other firmware versions.
 - This is still in beta form. Your mileage will vary! 
 
@@ -228,42 +252,3 @@ At the simulator's prompt you can change things as if from the keypad (`arm 1`, 
 If you find this project helpful and want to support my work, feel free to donate via PayPal:
 
 [https://paypal.me/amaziotis](https://paypal.me/amaziotis)
-
-## Two PIN-scoped partitions (Aeolus / Ixion)
-
-Set the optional Partition 2 PIN to enable a separate alarm entity and zone
-status/bypass sensors. Leave it empty to retain the original single-PIN client.
-Existing partition 1 entity IDs are preserved. Two-PIN entries enforce a minimum polling interval of 60 seconds; existing one-PIN intervals are unchanged.
-
-The optional client serializes access through one session, authenticates with the
-requested PIN, verifies partition identity, and preserves the upstream action retry
-and confirmation sequence in the optional client. A fully armed partition cannot be changed directly to
-perimeter mode; disarming remains an explicit user action.
-
-Alarm-state confirmation is separate from zone-table readiness. After control,
-zone entities may briefly be unavailable until a complete zones read succeeds;
-missing data is not reported as closed zones. Failed reads use the existing
-failure grace period. The next successful complete read restores zone entities.
-
-The analytics setting remains available and uses the upstream settings allowlist;
-partition PINs are excluded from that payload.
-
-### Test status (October 31, 2026)
-
-The user reports generally good daily operation on Aeolus 11.7 / Ixion 1.4.0,
-Home Assistant Core 2026.10.1, two PINs, and wired Ethernet to the router.
-Command delays of a few seconds are acceptable; transient unavailability after
-actions recovers in about five seconds. Intermittent session expiration, timeouts,
-and empty zone tables remain in the logs, including some failed reads.
-This is a test version, not a claim of full stability or other-firmware validation.
-Triggered-state detection is not added.
-
-Overlapping commands queue on the shared action lock. This also applies when one Home Assistant action targets both partition entities. Unconfirmed actions retain the original client behavior: log failure and refresh the real state, without converting False into a service exception. A prohibited full-to-perimeter transition still raises an explicit error.
-
-Temporary SIGMA_STATUS/SIGMA_DIAG warning diagnostics and their build identifier have been removed. The manifest is unchanged from upstream; release versioning remains controlled by tags.
-
-All 187 local regression tests pass on Windows/Python 3.12 with Home Assistant 2024.3.3
-and the repository compatibility setup. Existing AsyncMock/task-cleanup warnings remain in the
-test scaffolding. Tests use synthetic responses, not private installation HTML.
-Run the complete suite with `pytest tests/`; standalone protocol tests also run
-with `python tests/standalone/test_partition_protocol.py`.
