@@ -107,8 +107,7 @@ async def test_unconfirmed_results_keep_original_service_behavior(mock_config_en
         tasks.append(task)
         return task
     hass = SimpleNamespace(async_add_executor_job=AsyncMock(return_value=False), async_create_task=schedule)
-    coordinator = SimpleNamespace(hass=hass, client=MagicMock(), _action_in_progress=False,
-                                  _action_task=None, async_request_refresh=AsyncMock())
+    coordinator = SimpleNamespace(hass=hass, client=MagicMock(), _action_tasks=set(), async_request_refresh=AsyncMock())
     entity = PartitionAlarmPanel(coordinator, mock_config_entry, "2") if dual else SigmaAlarmPanel(coordinator, mock_config_entry)
     entity.hass = hass
     await entity.async_alarm_arm_away()

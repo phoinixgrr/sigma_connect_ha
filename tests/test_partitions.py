@@ -108,7 +108,6 @@ async def test_second_entity_calls_partition_aware_upstream_action(dual):
     await entity.async_alarm_arm_away()
     await finish_action_tasks([], refresh_tasks)
     c.hass.async_add_executor_job.assert_awaited_once_with(client.perform_partition_action, "arm", "2")
-    assert c._action_in_progress is False
     c.async_request_refresh.assert_awaited_once()
 
 
@@ -145,48 +144,47 @@ async def finish_action_tasks(executor_tasks, refresh_tasks):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("second_partition", ["1", "2"])
-async def test_busy_command_is_rejected_before_executor_across_shared_entities(
-    dual, second_partition
-):
+async def test_overlapping_commands_reach_the_selected_partitions(dual, second_partition):
     c, client, entry = dual
     entities, refresh_tasks = prepare_action_entities(c, entry)
-    first_entity = entities[1]
-    second_entity = entities[int(second_partition) - 1]
-    started, release = asyncio.Event(), asyncio.Event()
-    executor_tasks = []
+    started, second_submitted, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    commands = []
 
-    async def executor(func, *args):
-        executor_tasks.append(asyncio.current_task())
-        started.set()
-        await release.wait()
+    async def executor(func, action, partition):
+        assert func == client.perform_partition_action
+        if action == "disarm":
+            second_submitted.set()
+        async with c.lock:
+            commands.append((action, partition))
+            if action == "arm":
+                started.set()
+                await release.wait()
         return True
 
     c.hass.async_add_executor_job = AsyncMock(side_effect=executor)
-    first = asyncio.create_task(first_entity.async_alarm_arm_home())
+    first = asyncio.create_task(entities[1].async_alarm_arm_away())
+    second = None
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
-        assert c._action_in_progress is True
-        with pytest.raises(HomeAssistantError, match="command is in progress"):
-            await asyncio.wait_for(second_entity.async_alarm_disarm(), timeout=0.2)
-        c.hass.async_add_executor_job.assert_awaited_once_with(
-            client.perform_partition_action, "stay", "2"
-        )
-        assert c._action_in_progress is True
-        c.async_request_refresh.assert_not_called()
+        second = asyncio.create_task(entities[int(second_partition) - 1].async_alarm_disarm())
+        await asyncio.wait_for(second_submitted.wait(), timeout=1)
+        assert commands == [("arm", "2")]
+        assert not second.done()
     finally:
         release.set()
-        await asyncio.wait_for(first, timeout=1)
-        await finish_action_tasks(executor_tasks, refresh_tasks)
+        await asyncio.wait_for(asyncio.gather(
+            *(task for task in (first, second) if task is not None)
+        ), timeout=1)
+        await finish_action_tasks([], refresh_tasks)
 
-    assert c._action_in_progress is False
-    c.async_request_refresh.assert_awaited_once()
-    # The rejected disarm was not queued for later execution.
-    assert c.hass.async_add_executor_job.await_count == 1
+    assert commands == [("arm", "2"), ("disarm", second_partition)]
+    assert c.async_request_refresh.await_count == 2
+    assert not c._action_tasks
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["success", "unconfirmed", "transition", "error"])
-async def test_action_gate_clears_and_refreshes_after_every_executor_outcome(dual, outcome):
+async def test_action_refreshes_after_every_executor_outcome(dual, outcome):
     from custom_components.sigma_connect_ha.partition_client import ActionNotAllowedError
 
     c, client, entry = dual
@@ -214,7 +212,6 @@ async def test_action_gate_clears_and_refreshes_after_every_executor_outcome(dua
         await finish_action_tasks([], refresh_tasks)
 
     executor.assert_awaited_once_with(client.perform_partition_action, "stay", "2")
-    assert c._action_in_progress is False
     c.async_request_refresh.assert_awaited_once()
 
     # A completed or failed request must not prevent a later explicit command.
@@ -224,49 +221,7 @@ async def test_action_gate_clears_and_refreshes_after_every_executor_outcome(dua
     await finish_action_tasks([], refresh_tasks)
     assert executor.await_args.args == (client.perform_partition_action, "disarm", "2")
     assert executor.await_count == 2
-    assert c._action_in_progress is False
     assert c.async_request_refresh.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_cancelled_caller_keeps_shared_gate_until_actual_action_finishes(dual):
-    c, client, entry = dual
-    entities, refresh_tasks = prepare_action_entities(c, entry)
-    started, release = asyncio.Event(), asyncio.Event()
-    executor_tasks = []
-
-    async def executor(func, *args):
-        executor_tasks.append(asyncio.current_task())
-        started.set()
-        await release.wait()
-        return True
-
-    c.hass.async_add_executor_job = AsyncMock(side_effect=executor)
-    caller = asyncio.create_task(entities[1].async_alarm_arm_home())
-    try:
-        await asyncio.wait_for(started.wait(), timeout=1)
-        caller.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await caller
-
-        assert c._action_in_progress is True
-        assert not executor_tasks[0].done()
-        with pytest.raises(HomeAssistantError, match="command is in progress"):
-            await asyncio.wait_for(entities[0].async_alarm_disarm(), timeout=0.2)
-        c.hass.async_add_executor_job.assert_awaited_once_with(
-            client.perform_partition_action, "stay", "2"
-        )
-        c.async_request_refresh.assert_not_called()
-    finally:
-        release.set()
-        await finish_action_tasks(executor_tasks, refresh_tasks)
-        if not caller.done():
-            await asyncio.wait_for(caller, timeout=1)
-
-    assert c._action_in_progress is False
-    assert c.hass.async_add_executor_job.await_count == 1
-    c.async_request_refresh.assert_awaited_once()
-
 
 
 @pytest.mark.asyncio
@@ -295,7 +250,7 @@ async def test_cancelled_caller_retains_worker_and_consumes_its_late_failure(dua
     worker_ref = None
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
-        worker_ref = weakref.ref(c._action_task)
+        worker_ref = weakref.ref(next(iter(c._action_tasks)))
         assert worker_ref() is not None
         assert not worker_ref().done()
         caller.cancel()
@@ -305,11 +260,8 @@ async def test_cancelled_caller_retains_worker_and_consumes_its_late_failure(dua
         caller = None
         await asyncio.sleep(0)
 
-        assert c._action_in_progress is True
-        assert c._action_task is worker_ref()
+        assert worker_ref() in c._action_tasks
         assert not worker_ref().done()
-        with pytest.raises(HomeAssistantError, match="command is in progress"):
-            await asyncio.wait_for(entities[0].async_alarm_disarm(), timeout=0.2)
         c.hass.async_add_executor_job.assert_awaited_once_with(
             client.perform_partition_action, "stay", "2"
         )
@@ -322,8 +274,7 @@ async def test_cancelled_caller_retains_worker_and_consumes_its_late_failure(dua
         for _ in range(3):
             await asyncio.sleep(0)
         await finish_action_tasks([], refresh_tasks)
-        assert c._action_in_progress is False
-        assert c._action_task is None
+        assert not c._action_tasks
         c.async_request_refresh.assert_awaited_once()
         assert c.hass.async_add_executor_job.await_count == 1
 

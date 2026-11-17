@@ -129,22 +129,15 @@ class PartitionAlarmPanel(SigmaAlarmPanel):
         return super().available and data is not None and data.get("available", True)
 
     async def _async_action(self, action):
-        # Shared by both partition entities, before occupying an executor thread.
-        if getattr(self.coordinator, "_action_in_progress", False) is True:
-            raise HomeAssistantError(
-                "Another Sigma alarm command is in progress; wait for it to finish"
-            )
-        self.coordinator._action_in_progress = True
-        # Keep ownership until the executor actually stops, even if the service
-        # caller is cancelled. Retain the task and consume a possible late error.
+        # The client queues commands on the shared action lock. Keep each
+        # worker alive until it finishes, even if its service caller is cancelled.
         task = self.hass.async_create_task(self._async_execute_action(action))
-        self.coordinator._action_task = task
+        self.coordinator._action_tasks.add(task)
         task.add_done_callback(self._action_finished)
         return await asyncio.shield(task)
 
     def _action_finished(self, task):
-        if self.coordinator._action_task is task:
-            self.coordinator._action_task = None
+        self.coordinator._action_tasks.discard(task)
         if not task.cancelled():
             task.exception()
 
@@ -158,7 +151,6 @@ class PartitionAlarmPanel(SigmaAlarmPanel):
         except ActionNotAllowedError as error:
             raise HomeAssistantError(str(error)) from error
         finally:
-            self.coordinator._action_in_progress = False
             self.hass.async_create_task(self.coordinator.async_request_refresh())
 
     async def async_alarm_disarm(self, code=None):

@@ -88,8 +88,7 @@ class SigmaCoordinator(DataUpdateCoordinator):
         # Locks: one for polling, one to serialize actions
         self._poll_lock = asyncio.Lock()
         self.lock = asyncio.Lock()
-        self._action_in_progress = False
-        self._action_task = None
+        self._action_tasks = set()
 
         super().__init__(
             hass,

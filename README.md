@@ -214,7 +214,7 @@ and empty zone tables remain in the logs, including some failed reads.
 This is a test version, not a claim of full stability or other-firmware validation.
 Triggered-state detection is not added.
 
-The lock timeout fix is reviewed separately in [PR #7](https://github.com/phoinixgrr/sigma_connect_ha/pull/7). The optional client contains the two-PIN control flow; the original one-PIN entity queues overlapping commands as before. Only two-PIN entries reject overlapping service calls while an action runs. Unconfirmed actions retain the original client behavior: log failure and refresh the real state, without converting False into a service exception. A prohibited full-to-perimeter transition still raises an explicit error.
+Overlapping commands queue on the shared action lock. This also applies when one Home Assistant action targets both partition entities. Unconfirmed actions retain the original client behavior: log failure and refresh the real state, without converting False into a service exception. A prohibited full-to-perimeter transition still raises an explicit error.
 
 Temporary SIGMA_STATUS/SIGMA_DIAG warning diagnostics and their build identifier have been removed. The manifest is unchanged from upstream; release versioning remains controlled by tags.
 
