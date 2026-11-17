@@ -10,9 +10,7 @@
     "iot_class": "local_polling",
     "issue_tracker": "https://github.com/phoinixgrr/sigma_connect_ha/issues",
     "requirements": [
-      "requests",
-      "beautifulsoup4",
-      "voluptuous"
+      "beautifulsoup4"
     ],
     "version": "1.1.3"
   }
